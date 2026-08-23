@@ -1,0 +1,6 @@
+# Permissions for project-local .maki/init.lua
+[permissions]
+fs_read = true
+fs_write = true
+# Needed because the loader resolves paths via maki.uv.cwd().
+env = true

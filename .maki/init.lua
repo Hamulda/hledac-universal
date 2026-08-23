@@ -1,0 +1,7 @@
+-- hashline_edit now lives in the GLOBAL maki config and is auto-discovered
+-- for every project from ~/.config/maki/plugins/hashline_edit/.
+--
+-- This project-local loader is intentionally a no-op so the tools
+-- (read_hashline / edit_hashline) are not registered twice. The plugin
+-- files under this project's old ./plugins/ directory are now dead copies;
+-- delete this .maki/ directory and the ./plugins/ directory at your leisure.
