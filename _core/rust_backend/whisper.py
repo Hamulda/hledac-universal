@@ -246,7 +246,7 @@ def __getattr__(name: str) -> Any:
     # These are accessed from rust.whisper.*
     try:
         rust_domain = _get_rust_domain()
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         rust_domain = None
 
     if name == "is_available":

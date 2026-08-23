@@ -108,7 +108,7 @@ class _PythonDeobfuscateDomain:
                     encodings.append("hex")
                     bytes_decoded += len(decoded.encode())
                     total_layers += 1
-        except ValueError, UnicodeDecodeError:
+        except (ValueError, UnicodeDecodeError):
             pass
 
         # Stage 3: Try base64 with recursive peeling
@@ -156,7 +156,7 @@ class _PythonDeobfuscateDomain:
                     encodings.append("hex")
                     bytes_decoded += len(decoded.encode())
                     total_layers += 1
-        except ValueError, UnicodeDecodeError:
+        except (ValueError, UnicodeDecodeError):
             pass
 
         # Try base64 (may nest)

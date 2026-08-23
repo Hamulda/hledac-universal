@@ -378,7 +378,7 @@ def build_forensic_analysis_jsonld(
             by_source[src] = by_source.get(src, 0) + 1
             try:
                 c = float(f.get("confidence", 0.0) or 0.0)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 c = 0.0
             if 0.0 <= c <= 1.0:
                 confs.append(c)

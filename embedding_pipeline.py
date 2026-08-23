@@ -149,7 +149,7 @@ class EmbeddingRouter:
             async def batch_encode(texts):
                 ane_task = router.encode_async(texts[:8])  # Small batch → ANE‖GPU
                 gpu_task = router._encode_gpu_async(texts[8:])  # Large batch → GPU
-                ane_result, gpu_result = await asyncio.gather(ane_task, gpu_task)
+                ane_result, gpu_result = await asyncio.gather(ane_task, gpu_task, return_exceptions=True)
                 return np.vstack([ane_result, gpu_result])
         """
         import asyncio
@@ -743,7 +743,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None = None, keep_lo
             multilingual_task = asyncio.to_thread(
                 _embed_multilingual_batch, multilingual_texts, batch_size, keep_loaded
             )
-            english_embeddings, multilingual_embeddings = await asyncio.gather(english_task, multilingual_task)
+            english_embeddings, multilingual_embeddings = await asyncio.gather(english_task, multilingual_task, return_exceptions=True)
             for i, emb_idx in enumerate(english_indices):
                 result[emb_idx] = english_embeddings[i]
             for i, emb_idx in enumerate(multilingual_indices):

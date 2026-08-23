@@ -1,0 +1,58 @@
+{
+  "name": "jq_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "jq_query",
+      "description": "Query JSON data with jq filter",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "filter": { "type": "string", "description": "jq filter expression (e.g. '.key', '.[] | .name')" },
+          "input": { "type": "string", "description": "JSON input string or @stdin" }
+        },
+        "required": ["filter"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "echo",
+        "args": ["${input}", "|", "jq", "${filter}"]
+      }
+    },
+    {
+      "name": "jq_file",
+      "description": "Query JSON file with jq filter",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "filter": { "type": "string", "description": "jq filter expression" },
+          "path": { "type": "string", "description": "Path to JSON file" }
+        },
+        "required": ["filter", "path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "jq",
+        "args": ["${filter}", "${path}"]
+      }
+    },
+    {
+      "name": "jq_from_file",
+      "description": "Parse and transform JSON file to JSON output",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "filter": { "type": "string", "description": "jq filter (default: .)" },
+          "path": { "type": "string", "description": "Path to JSON file" }
+        },
+        "required": ["path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "jq",
+        "args": ["${filter:-.}", "${path}"]
+      }
+    }
+  ]
+}

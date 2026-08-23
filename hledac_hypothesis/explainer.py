@@ -107,7 +107,7 @@ class SimpleNodeAblationExplainer:
                 continue
             try:
                 importances[str(idx)] = original_score - float(score_result)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 continue
         if all(v <= 0.0 for v in importances.values()):
             return {}

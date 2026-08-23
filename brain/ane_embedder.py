@@ -101,7 +101,7 @@ class _MLXFamilyMutex:
             try:
                 fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
                 fd.close()
-            except OSError, AttributeError:  # noqa: BLE001
+            except (OSError, AttributeError):  # noqa: BLE001
                 pass
             _MLXFamilyMutex._cross_lock_fd = None
 

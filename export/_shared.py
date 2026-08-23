@@ -48,7 +48,7 @@ def _iso_timestamp(ts: Any, *, fmt: str = "iso") -> str:
             dt = ts
         else:
             dt = datetime.fromtimestamp(float(ts), tz=UTC)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return _utc_now() if fmt == "rfc3339" else "unknown"
 
     if fmt == "rfc3339":

@@ -162,7 +162,7 @@ class PatternMiningAdapter:
                     try:
                         payload = _json_loads(f.payload_text)
                         value = payload.get("confidence", 0.5)
-                    except ValueError, TypeError:  # noqa: BLE001
+                    except (ValueError, TypeError):  # noqa: BLE001
                         pass
                 events.append(
                     Event(

@@ -184,7 +184,7 @@ def _is_curl_cffi_available() -> bool:
         from importlib import util as _importlib_util
 
         _TLS_IMPERSONATE_AVAILABLE = _importlib_util.find_spec("curl_cffi") is not None
-    except ImportError, ValueError:
+    except (ImportError, ValueError):
         _TLS_IMPERSONATE_AVAILABLE = False
     return _TLS_IMPERSONATE_AVAILABLE
 
@@ -248,7 +248,7 @@ def _check_browser_memory_pressure() -> None:
     """
     try:
         threshold = float(os.environ.get("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", "1.0"))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         threshold = 1.0
     rss = _rss_gib()
     if rss > threshold > 0:
@@ -278,7 +278,7 @@ class StealthBrowser:
 
             _importlib_util.find_spec("nodriver")
             return True
-        except ImportError, ValueError:
+        except (ImportError, ValueError):
             logger.debug("nodriver not available, using httpx fallback")
             return False
 

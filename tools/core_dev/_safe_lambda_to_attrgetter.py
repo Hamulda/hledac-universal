@@ -92,7 +92,7 @@ def process_file(filepath: str, dry_run: bool = False) -> tuple[bool, int]:
     try:
         with open(filepath, encoding="utf-8") as f:
             content = f.read()
-    except:
+    except Exception:
         return False, 0
 
     original = content

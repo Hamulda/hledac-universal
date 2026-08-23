@@ -1,0 +1,38 @@
+{
+  "name": "fzf_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "fzf_files",
+      "description": "Fuzzy file finder - interactive search",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Directory to search (default: current)" },
+          "query": { "type": "string", "description": "Initial query string" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "fzf",
+        "args": ["--preview", "head -20 {}"]
+      }
+    },
+    {
+      "name": "fzf_preview",
+      "description": "Fuzzy finder with file preview",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Directory to search" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "fzf",
+        "args": ["--preview", "bat --style=numbers --color=always {} 2>/dev/null || cat {}"]
+      }
+    }
+  ]
+}

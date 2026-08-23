@@ -1,0 +1,138 @@
+{
+  "name": "git_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "git_status",
+      "description": "Show git working tree status - modified, staged, untracked files",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Repository path (default: cwd)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "git",
+        "args": ["-C", "${path:.}", "status", "--porcelain"]
+      }
+    },
+    {
+      "name": "git_log",
+      "description": "Show recent git commit history",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Repository path (default: cwd)" },
+          "limit": { "type": "number", "description": "Number of commits to show (default 10)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "git",
+        "args": ["-C", "${path:.}", "log", "--oneline", "-n", "${limit:-10}"]
+      }
+    },
+    {
+      "name": "git_diff",
+      "description": "Show changes between commits, commit and working tree, etc",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Repository path (default: cwd)" },
+          "target": { "type": "string", "description": "Target for diff (e.g. HEAD, branch name, or empty for working tree)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "git",
+        "args": ["-C", "${path:.}", "diff", "${target}"]
+      }
+    },
+    {
+      "name": "git_branch",
+      "description": "List, create, or delete git branches",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Repository path (default: cwd)" },
+          "list": { "type": "boolean", "description": "List branches (default true)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "git",
+        "args": ["-C", "${path:.}", "branch", "-a"]
+      }
+    },
+    {
+      "name": "git_commit",
+      "description": "Record changes to the repository",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Repository path (default: cwd)" },
+          "message": { "type": "string", "description": "Commit message" }
+        },
+        "required": ["message"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "git",
+        "args": ["-C", "${path:.}", "commit", "-m", "${message}"]
+      }
+    },
+    {
+      "name": "git_push",
+      "description": "Push commits to remote repository",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Repository path (default: cwd)" },
+          "remote": { "type": "string", "description": "Remote name (default: origin)" },
+          "branch": { "type": "string", "description": "Branch name (default: current)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "git",
+        "args": ["-C", "${path:.}", "push", "${remote:-origin}", "${branch}"]
+      }
+    },
+    {
+      "name": "git_pull",
+      "description": "Fetch and integrate changes from remote repository",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Repository path (default: cwd)" },
+          "remote": { "type": "string", "description": "Remote name (default: origin)" },
+          "branch": { "type": "string", "description": "Branch name (default: current)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "git",
+        "args": ["-C", "${path:.}", "pull", "${remote:-origin}", "${branch}"]
+      }
+    },
+    {
+      "name": "git_clone",
+      "description": "Clone a repository into a new directory",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "Repository URL to clone" },
+          "path": { "type": "string", "description": "Target directory" }
+        },
+        "required": ["url"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "git",
+        "args": ["clone", "${url}", "${path}"]
+      }
+    }
+  ]
+}

@@ -272,7 +272,7 @@ class BaseEncodingDetector:
                     )
                 )
                 self._stats["base64_found"] += 1
-            except ValueError, LookupError:
+            except (ValueError, LookupError):
                 continue
         return findings
 
@@ -314,7 +314,7 @@ class BaseEncodingDetector:
                     )
                 )
                 self._stats["base32_found"] += 1
-            except ValueError, LookupError:
+            except (ValueError, LookupError):
                 continue
         return findings
 
@@ -353,7 +353,7 @@ class BaseEncodingDetector:
                     )
                 )
                 self._stats["base85_found"] += 1
-            except ValueError, LookupError:
+            except (ValueError, LookupError):
                 continue
         return findings
 
@@ -397,7 +397,7 @@ class BaseEncodingDetector:
                     )
                 )
                 self._stats["hex_found"] += 1
-            except ValueError, LookupError:
+            except (ValueError, LookupError):
                 continue
         return findings
 
@@ -435,7 +435,7 @@ class BaseEncodingDetector:
                     )
                 )
                 self._stats["url_found"] += 1
-            except ValueError, LookupError:
+            except (ValueError, LookupError):
                 continue
         return findings
 
@@ -463,7 +463,7 @@ class BaseEncodingDetector:
                 return None
             try:
                 decoded_str = decoded.decode("utf-8", errors="ignore")
-            except UnicodeDecodeError, ValueError:
+            except (UnicodeDecodeError, ValueError):
                 return None
             nested_findings = await self.detect_text(decoded_str)
             if nested_findings:
@@ -475,11 +475,11 @@ class BaseEncodingDetector:
                             chain.final_content = base64.b64decode(nf.original).decode("utf-8", errors="ignore")
                         elif nf.encoding_type == "hex":
                             chain.final_content = bytes.fromhex(nf.original).decode("utf-8", errors="ignore")
-                    except UnicodeDecodeError, ValueError:  # noqa: BLE001
+                    except (UnicodeDecodeError, ValueError):  # noqa: BLE001
                         pass
                 chain.depth = len(chain.encodings)
                 return chain
-        except UnicodeDecodeError, ValueError, LookupError, OSError:  # noqa: BLE001
+        except (UnicodeDecodeError, ValueError, LookupError, OSError):  # noqa: BLE001
             pass
         return None
 

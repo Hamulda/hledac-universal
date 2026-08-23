@@ -36,6 +36,15 @@ from .memory_manager import (
     memory_get_history,
     memory_put,
 )
+from .decision_capture import (
+    DecisionCapture,
+    DecisionStore,
+    DecisionRecord,
+    DecisionKind,
+    get_decision_capture,
+    get_decision_store,
+    init_decision_capture,
+)
 
 __all__ = [
     "MemoryManager",
@@ -45,4 +54,12 @@ __all__ = [
     "memory_get",
     "memory_delete",
     "memory_get_history",
+    # Decision Capture
+    "DecisionCapture",
+    "DecisionStore",
+    "DecisionRecord",
+    "DecisionKind",
+    "get_decision_capture",
+    "get_decision_store",
+    "init_decision_capture",
 ]

@@ -1,0 +1,25 @@
+{
+  "name": "pytest_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "pytest",
+      "description": "Run pytest with options. Use --timeout=30 -q for fast testing.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Test path or directory (default: tests/)" },
+          "args": { "type": "string", "description": "pytest arguments (e.g. -x --timeout=30 -q)" },
+          "timeout": { "type": "number", "description": "Timeout in seconds" }
+        },
+        "required": []
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "pytest",
+        "args": ["${path:-tests/}", "${args:--timeout=30 -q}"]
+      }
+    }
+  ]
+}

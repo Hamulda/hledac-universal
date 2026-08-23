@@ -107,7 +107,7 @@ class _LazyResolver:
                     mod = importlib.import_module(module_path)
                 self._resolved = getattr(mod, attr)
             return self._resolved
-        except ImportError, AttributeError:
+        except (ImportError, AttributeError):
             self._resolved = self._fallback
             return self._fallback
 

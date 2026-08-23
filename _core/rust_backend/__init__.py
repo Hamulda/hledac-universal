@@ -166,6 +166,7 @@ from ._prober import reset as _reset_probe
 
 _SUBMODULE_NAMES: tuple[str, ...] = (
     "bloom",
+    "dedup_bloom",
     "hash",
     "ip",
     "ioc",
@@ -414,7 +415,7 @@ class AccelBackend:
             # C2 fix: Catch only container/configuration errors, not all exceptions
             try:
                 force = self._container.try_get("rust.force")
-            except AttributeError, LookupError:
+            except (AttributeError, LookupError):
                 pass  # container not available or rust.force not registered
 
         # 1-2. Env var override (backward compat — always-on, no toggles)
@@ -612,7 +613,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _pipeline_compose_get_domain()
-        except AttributeError, ImportError:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -626,7 +627,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _signal_batch_get_domain()
-        except AttributeError, ImportError:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -640,7 +641,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _federated_qtable_get_domain()
-        except AttributeError, ImportError:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -667,7 +668,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _feed_decision_get_domain()
-        except AttributeError, ImportError:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -681,7 +682,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _feed_pipeline_get_domain()
-        except AttributeError, ImportError:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -829,7 +830,7 @@ class _TlsMetadataWrapper:
     ) -> tuple[list[str], str | None, str | None]:
         try:
             return self._fn(san_entries, issuer_org, der_bytes)  # type: ignore
-        except OSError, RuntimeError:  # C1 fix: Only catch FFI errors
+        except (OSError, RuntimeError):  # C1 fix: Only catch FFI errors
             return ([], None, None)
 
     def connect_and_ja4(
@@ -848,7 +849,7 @@ class _TlsMetadataWrapper:
         if self._tls13 is not None:
             try:
                 return self._tls13.connect_and_ja4(host, port, sni=sni, alpn=alpn, timeout_ms=timeout_ms)
-            except OSError, RuntimeError:  # noqa: BLE001
+            except (OSError, RuntimeError):  # noqa: BLE001
                 pass
         return None
 

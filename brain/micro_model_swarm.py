@@ -24,7 +24,7 @@ import threading
 import time
 from typing import Any
 
-import mlx_lm
+from hledac.universal.utils.optional_imports import get_mlx_lm
 
 from .content_router import ContentRouter, route_content
 from .micro_model_pool import MicroModelPool, TaskType
@@ -197,6 +197,9 @@ class MicroModelSwarmRouter:
         if main is None:
             raise RuntimeError("No main model registered")
         model, tokenizer = main
+        mlx_lm = get_mlx_lm()
+        if mlx_lm is None:
+            raise RuntimeError("Cannot generate: mlx_lm not available")
         result = mlx_lm.generate(model, tokenizer, prompt=text, max_tokens=max_tokens, temp=temp, **kwargs)
         return (result, None, task_type)
 

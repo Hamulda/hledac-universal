@@ -1669,7 +1669,7 @@ class ParquetHistoryReader:
 
             pf = pq.ParquetFile(self.path)
             return pf.metadata.num_rows
-        except OSError, FileNotFoundError:  # File access errors — non-critical
+        except (OSError, FileNotFoundError):  # File access errors — non-critical
             return 0
         except Exception:  # noqa: BLE001 — best-effort; PyArrow count; non-critical
             return 0
@@ -1682,7 +1682,7 @@ class ParquetHistoryReader:
 
             pf = pq.ParquetFile(self.path)
             return pf.num_row_groups
-        except OSError, FileNotFoundError:  # File access errors — non-critical
+        except (OSError, FileNotFoundError):  # File access errors — non-critical
             return 0
         except Exception:  # noqa: BLE001 — best-effort; rowgroup count; non-critical
             return 0
@@ -1758,7 +1758,7 @@ class ParquetHistoryReader:
                         yield batch
                 except StopIteration:
                     continue
-        except OSError, FileNotFoundError:  # File access errors — non-critical
+        except (OSError, FileNotFoundError):  # File access errors — non-critical
             return
         except Exception:  # noqa: BLE001 — best-effort; PyArrow fallback; non-critical
             return
@@ -1817,7 +1817,7 @@ class ParquetHistoryReader:
             return lf
         except ImportError:
             raise ImportError("Polars not installed: pip install polars")
-        except OSError, FileNotFoundError:  # File access errors — non-critical
+        except (OSError, FileNotFoundError):  # File access errors — non-critical
             return None
         except Exception:  # noqa: BLE001 — best-effort; PyArrow fallback; non-critical
             return None
@@ -4822,7 +4822,7 @@ class DuckDBShadowStore:
         if self._persistent_conn is not None:
             try:
                 self._persistent_conn.close()
-            except OSError, RuntimeError:  # DuckDB close errors — non-critical
+            except (OSError, RuntimeError):  # DuckDB close errors — non-critical
                 pass
             except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
@@ -4830,7 +4830,7 @@ class DuckDBShadowStore:
         if self._file_conn is not None:
             try:
                 self._file_conn.close()
-            except OSError, RuntimeError:  # DuckDB close errors — non-critical
+            except (OSError, RuntimeError):  # DuckDB close errors — non-critical
                 pass
             except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
@@ -4838,7 +4838,7 @@ class DuckDBShadowStore:
         if self._wal_manager is not None:
             try:
                 self._wal_manager.close()
-            except OSError, RuntimeError:  # DuckDB close errors — non-critical
+            except (OSError, RuntimeError):  # DuckDB close errors — non-critical
                 pass
             except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
@@ -4910,7 +4910,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_insert_finding, finding_id, query, source_type, confidence)
             return fut.result()
-        except OSError, RuntimeError:  # DB write errors — non-critical
+        except (OSError, RuntimeError):  # DB write errors — non-critical
             return False
         except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
@@ -4924,7 +4924,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_insert_run, run_id, started_at, ended_at, total_fds, rss_mb)
             return fut.result()
-        except OSError, RuntimeError:  # DB write errors — non-critical
+        except (OSError, RuntimeError):  # DB write errors — non-critical
             return False
         except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
@@ -4936,7 +4936,7 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_findings, limit)
             return fut.result()
-        except OSError, RuntimeError:  # DB query errors — non-critical
+        except (OSError, RuntimeError):  # DB query errors — non-critical
             return []
         except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []

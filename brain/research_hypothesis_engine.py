@@ -1522,7 +1522,7 @@ class HypothesisEngine:
                         if text and text not in findings:
                             extra_texts.append(text)
                     findings = list(findings) + extra_texts
-            except AttributeError, TypeError:  # noqa: BLE001
+            except (AttributeError, TypeError):  # noqa: BLE001
                 pass
             except Exception:  # noqa: BLE001
                 pass

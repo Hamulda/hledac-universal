@@ -484,7 +484,7 @@ def _release_graph_lock(lock_path: pathlib.Path) -> None:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
                 os.close(fd)
-    except OSError, FileNotFoundError:  # noqa: BLE001
+    except (OSError, FileNotFoundError):  # noqa: BLE001
         pass
 
 

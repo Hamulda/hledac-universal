@@ -23,14 +23,16 @@ import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal._core.env_config import ENV
+
 if TYPE_CHECKING:
     pass
 
 
-_LOG_FORMAT = os.environ.get("HLEDAC_LOG_FORMAT", "json").strip().lower()
-_LOG_LEVEL = getattr(logging, os.environ.get("HLEDAC_LOG_LEVEL", "INFO").strip().upper(), logging.INFO)
-_LOG_STDOUT = os.environ.get("HLEDAC_LOG_STDOUT", "1").strip() != "0"
-_LOG_FILE = os.environ.get("HLEDAC_LOG_FILE", "").strip() or None
+_LOG_FORMAT = ENV.get_str("HLEDAC_LOG_FORMAT", default="json").strip().lower()
+_LOG_LEVEL = getattr(logging, ENV.get_str("HLEDAC_LOG_LEVEL", default="INFO").strip().upper(), logging.INFO)
+_LOG_STDOUT = ENV.get_bool("HLEDAC_LOG_STDOUT", default=True)
+_LOG_FILE = ENV.get_str("HLEDAC_LOG_FILE") or None
 _MAX_LOG_LINE = 8192
 
 

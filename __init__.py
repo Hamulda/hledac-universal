@@ -285,7 +285,7 @@ def __getattr__(name: str) -> Any:
     if mod_path is not None:
         try:
             mod = import_module(mod_path)
-        except ImportError, ModuleNotFoundError:
+        except (ImportError, ModuleNotFoundError):
             # Index was built from stale data — rebuild and retry once
             _ATTRIBUTE_INDEX = _build_index()
             mod_path = _ATTRIBUTE_INDEX.get(name)

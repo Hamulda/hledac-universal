@@ -971,7 +971,7 @@ class QualityAssessor:
 
         results: list[FindingQualityDecision] = []
         tasks = [asyncio.to_thread(self.assess_batch, chunk) for chunk in chunks]
-        chunk_results = await asyncio.gather(*tasks)
+        chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for chunk_result in chunk_results:
             results.extend(chunk_result)

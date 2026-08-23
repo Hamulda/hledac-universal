@@ -300,7 +300,27 @@ class DeepHermes3Engine:
         )
 
     async def decide_next_action(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Decide next action in research flow."""
+        """
+        Decide next action in research flow.
+
+        When HLEDAC_ENABLE_DECISION_CAPTURE=1, decisions are auto-captured
+        to EvidenceLog for audit trail and Haft-style decision records.
+        """
+        # Check feature flag for decision capture
+        try:
+            from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+            capture_enabled = FeatureFlags.get(FeatureFlag.DECISION_CAPTURE)
+        except Exception:
+            capture_enabled = False
+
+        if capture_enabled:
+            try:
+                from hledac.universal.memory.decision_capture import DecisionCapture, get_decision_capture
+                capture = get_decision_capture()
+                return await capture.decide_next_action(self, context)
+            except Exception:
+                pass  # Fall through to direct call
+
         return await decide_next_action(self, context)
 
     async def generate_report(self, query: str, context: list[str]) -> str:

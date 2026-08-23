@@ -283,7 +283,7 @@ class DuckDBFTSStore:
                     try:
                         parsed = _msgspec_loads(line)
                         entries.append((parsed["op"], parsed["doc"]))
-                    except ValueError, KeyError:
+                    except (ValueError, KeyError):
                         continue
         except Exception:
             return

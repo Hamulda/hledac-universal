@@ -65,7 +65,7 @@ fn get_lmdb_env<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyAny>>
     // Slow path: open new env and cache it
     let lmdb = PyModule::import(py, "lmdb")?;
     let open_fn: Bound<'py, PyAny> = lmdb.getattr("open")?;
-    let env: Bound<'py, PyAny> = open_fn.call1((path,))?);
+    let env: Bound<'py, PyAny> = open_fn.call1((path,))?;
 
     // Store Arc-wrapped Py<PyAny> in cache — clone before unbind since
     // env is consumed by unbind() but we still need the bound reference.
@@ -76,11 +76,20 @@ fn get_lmdb_env<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyAny>>
 }
 
 /// R4-07: Close and remove a cached env (for cleanup / testing).
-/// Returns Ok if removed, Ok(None) if not found.
+///
+/// Closes the lmdb.Environment before removing from cache.
+/// Must be called with GIL held (called from Python via pyfunction).
 fn close_lmdb_env(path: &str) {
     if let Some(cache) = LMDB_ENV_CACHE.get() {
         if let Ok(mut guard) = cache.write() {
-            guard.remove(path);
+            if let Some(env_arc) = guard.remove(path) {
+                // env_arc is Arc<Py<PyAny>> — need GIL to call .close()
+                // Safety: Python::with_gil acquires the GIL
+                Python::with_gil(|py| {
+                    let env: Bound<'_, PyAny> = unsafe { Bound::from_borrowed_ptr(py, env_arc.as_ptr()) };
+                    let _ = env.call_method0("close");
+                });
+            }
         }
     }
 }
@@ -590,7 +599,7 @@ pub fn lmdb_dht_bfs_traverse<'py>(
 
                 for key in frontier {
                     let neigh_key = {
-                        let mut k = neigh_prefix);
+                        let mut k = neigh_prefix.to_vec();
                         k.extend_from_slice(&key);
                         k
                     };
@@ -607,7 +616,7 @@ pub fn lmdb_dht_bfs_traverse<'py>(
                     if let Some(data) = neigh_data {
                         if let Ok(neighbors) = serde_json::from_slice::<Vec<String>>(&data) {
                             for neighbor in neighbors {
-                                let n_bytes = neighbor);
+                                let n_bytes = neighbor.into_bytes();
                                 if visited.insert(n_bytes.clone()) {
                                     next_frontier.push(n_bytes);
                                 }
@@ -917,7 +926,7 @@ fn _resolve_env<'py>(
         // It's a path string — open new env
         let lmdb = PyModule::import(py, "lmdb")?;
         let open_fn: Bound<'py, PyAny> = lmdb.getattr("open")?;
-        let env: Bound<'py, PyAny> = open_fn.call1((path_str,))?);
+        let env: Bound<'py, PyAny> = open_fn.call1((path_str,))?;
         Ok(env)
     } else {
         // It's already an env

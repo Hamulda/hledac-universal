@@ -586,7 +586,7 @@ class WARCContentAdapter:
             length = int(result.length) if result.length else 0
             if length <= 0 or length > 50 * 1024 * 1024:
                 length = _MAX_WARC_BYTES
-        except ValueError, OverflowError:
+        except (ValueError, OverflowError):
             return None
 
         async with self._warc_semaphore:

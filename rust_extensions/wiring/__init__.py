@@ -117,9 +117,6 @@ from rust_extensions.wiring.content_hasher_wiring import (
 # DedupBloom (B4: Distributed BloomFilter for URL dedup)
 from rust_extensions.wiring.dedup_bloom_wiring import (
     DedupBloom,
-    bloom_add,
-    bloom_check,
-    bloom_skip,
     get_dedup_bloom,
 )
 

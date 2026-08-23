@@ -1,0 +1,35 @@
+{
+  "name": "lazygit_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "lazygit_status",
+      "description": "Show lazygit TUI status (non-interactive)",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Repository path (default: cwd)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "lazygit",
+        "args": ["--git-dir", "${path}/.git", "--worktree", "${path}", "--return-to-original-state", "--only-call-cleanup"]
+      }
+    },
+    {
+      "name": "lazygit_check",
+      "description": "Check if lazygit is installed",
+      "inputs": {
+        "type": "object",
+        "properties": {}
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "which",
+        "args": ["lazygit"]
+      }
+    }
+  ]
+}

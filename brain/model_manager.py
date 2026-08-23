@@ -123,7 +123,7 @@ def _load_unload_timeout() -> float:
         if val <= 0:
             raise ValueError("timeout must be positive")
         return val
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         logger.warning(
             "[P1E-B] HLEDAC_MODEL_UNLOAD_TIMEOUT_S=%r invalid, using default 5.0s",
             os.environ.get("HLEDAC_MODEL_UNLOAD_TIMEOUT_S"),

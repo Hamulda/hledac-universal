@@ -218,7 +218,7 @@ def extract_retry_after(headers) -> float | None:
         return None
     try:
         return float(ra)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return None
 
 

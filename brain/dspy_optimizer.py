@@ -407,20 +407,20 @@ class DSPyOptimizer:
                 with dspy.context(lm=lm):
                     optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
                     optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)
-            except AttributeError, TypeError:
+            except (AttributeError, TypeError):
                 cast(Any, program).lm = lm
                 optimizer = MIPROv2(metric=_osint_metric, auto=None, num_candidates=2)
                 optimized = optimizer.compile(program, trainset=trainset, num_trials=2, minibatch=False)
             instr = None
             try:
                 instr = str(optimized.predictors()[0].signature.instructions)
-            except AttributeError, IndexError:  # noqa: BLE001
+            except (AttributeError, IndexError):  # noqa: BLE001
                 pass
             if instr is None:
                 try:
                     predictor = list(optimized.named_predictors())[0][1]
                     instr = str(predictor.signature.instructions)
-                except AttributeError, IndexError, StopIteration:  # noqa: BLE001
+                except (AttributeError, IndexError, StopIteration):  # noqa: BLE001
                     pass
             if instr is None:
                 try:

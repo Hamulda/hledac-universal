@@ -81,7 +81,7 @@ def get_source_adapter(source_type: str) -> SourceEntry | None:
             resolved_adapter: Callable[..., Any] = getattr(mod, entry._lazy_attr)
             entry.adapter = resolved_adapter
             entry._loaded = True
-        except ImportError, AttributeError:
+        except (ImportError, AttributeError):
             entry._loaded = True
             entry.adapter = None
         return entry

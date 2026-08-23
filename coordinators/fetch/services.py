@@ -125,7 +125,7 @@ class DNSCacheService:
                 if ip in net:
                     return False
             return not (ip.is_multicast or ip.is_unspecified or ip.is_loopback)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return False
 
     async def resolve(self, host: str) -> tuple[bool, list[str]]:
@@ -196,7 +196,7 @@ class DNSCacheService:
 
             return (True, ips)
 
-        except TimeoutError, OSError:
+        except (TimeoutError, OSError):
             return (False, [])
 
     async def prefetch(self, hosts: list[str]) -> None:
@@ -311,7 +311,7 @@ class CircuitBreakerService:
             from hledac.universal.transport import circuit_breaker as cb
 
             cb.domain_breaker_record_success(domain)
-        except ImportError, AttributeError:  # noqa: BLE001
+        except (ImportError, AttributeError):  # noqa: BLE001
             pass
 
     def record_domain_failure(self, domain: str, is_timeout: bool = False, failure_kind: str = "") -> None:
@@ -353,7 +353,7 @@ class CircuitBreakerService:
             breaker = cb.get_transport_breaker(transport)
             if breaker is not None:
                 breaker.record_success()
-        except ImportError, AttributeError:  # noqa: BLE001
+        except (ImportError, AttributeError):  # noqa: BLE001
             pass
 
     def record_transport_failure(self, transport: str, is_timeout: bool = False) -> None:

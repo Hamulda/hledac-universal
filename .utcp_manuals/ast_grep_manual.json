@@ -1,0 +1,44 @@
+{
+  "name": "ast_grep_tools",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "ast_search",
+      "description": "Vyhledá strukturální vzor v kódu (např. 'fn $NAME($$$ARGS) -> Result<$$$R>') v JSON formátu.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string", "description": "AST vzor s proměnnými jako $NAME nebo $$$ARGS" },
+          "language": { "type": "string", "description": "Jazyk: python nebo rust" },
+          "path": { "type": "string", "description": "Cílová složka nebo soubor" }
+        },
+        "required": ["pattern", "language", "path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "ast-grep",
+        "args": ["scan", "--pattern", "${pattern}", "--lang", "${language}", "--json", "${path}"]
+      }
+    },
+    {
+      "name": "ast_rewrite",
+      "description": "Provede strukturální náhradu AST uzlů napříč soubory bez poškození okolní syntaxe.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string", "description": "Hledaný AST vzor" },
+          "rewrite": { "type": "string", "description": "Cílový tvar náhrady" },
+          "language": { "type": "string", "description": "Jazyk: python nebo rust" },
+          "path": { "type": "string", "description": "Cesta k souboru" }
+        },
+        "required": ["pattern", "rewrite", "language", "path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "python3",
+        "args": [".utcp_tools/ast_grep.py", "rewrite", "${pattern}", "${language}", "${path}", "${rewrite}"]
+      }
+    }
+  ]
+}

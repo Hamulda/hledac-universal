@@ -1549,7 +1549,7 @@ class UniversalMetadataExtractor:
 
             owner = pwd.getpwuid(stat.st_uid).pw_name
             group = grp.getgrgid(stat.st_gid).gr_name
-        except ImportError, KeyError:  # noqa: BLE001
+        except (ImportError, KeyError):  # noqa: BLE001
             pass
         mime_type = None
         try:
@@ -1604,7 +1604,7 @@ class UniversalMetadataExtractor:
 
             owner = pwd.getpwuid(stat.st_uid).pw_name
             group = grp.getgrgid(stat.st_gid).gr_name
-        except ImportError, KeyError:  # noqa: BLE001
+        except (ImportError, KeyError):  # noqa: BLE001
             pass
         mime_type = None
         try:
@@ -1651,7 +1651,7 @@ class UniversalMetadataExtractor:
                 metadata.flash = bool(int(value)) if not isinstance(value, bool) else value
             elif tag == "Orientation" and metadata.orientation is None:
                 metadata.orientation = int(value)
-        except ValueError, TypeError:  # noqa: BLE001
+        except (ValueError, TypeError):  # noqa: BLE001
             pass
 
     def _extract_exif_to_metadata(self, exif_data: dict, metadata: ImageMetadata) -> None:
@@ -1896,13 +1896,13 @@ class UniversalMetadataExtractor:
         def safe_int(val):
             try:
                 return int(_exif_to_float(val))
-            except:
+            except Exception:
                 return None
 
         def safe_bool(val):
             try:
                 return bool(int(val)) if not isinstance(val, bool) else val
-            except:
+            except Exception:
                 return None
 
         mappings = [

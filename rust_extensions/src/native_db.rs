@@ -571,6 +571,46 @@ impl MongoDumper {
         MongoDumper {}
     }
 
+    /// Tier 0: Fast MongoDB hello/ping detector.
+    ///
+    /// Sends a minimal OP_MSG ping command and returns true if MongoDB responds.
+    /// This is the fastest way to detect if a host is running MongoDB.
+    ///
+    /// Uses shorter timeouts (2s connect, 5s read) for Tier 0 speed.
+    /// Returns bool: true = MongoDB detected, false = no response or not MongoDB.
+    fn ping(&self, host: &str, port: u16, timeout_s: Option<f64>) -> bool {
+        let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(5.0));
+        let connect_timeout = Duration::from_secs_f64(2.0);
+
+        let Ok(addr) = resolve_addr(host, port) else {
+            return false;
+        };
+
+        let Ok(mut stream) = TcpStream::connect_timeout(&addr, connect_timeout) else {
+            return false;
+        };
+
+        if stream.set_read_timeout(Some(timeout)).is_err() {
+            return false;
+        }
+        if stream.set_write_timeout(Some(timeout)).is_err() {
+            return false;
+        }
+
+        // Build and send ping command: { ping: 1 }
+        let ping_cmd = build_op_msg("admin", &[("ping", bson_int32!(1))]);
+        if send_and_receive_mongo(&mut stream, &ping_cmd, timeout).is_err() {
+            return false;
+        }
+
+        // Read response - any valid response means MongoDB is up
+        let Ok(_raw) = read_all(&mut stream, 1024) else {
+            return false;
+        };
+
+        true
+    }
+
     /// List all databases on a MongoDB instance.
     fn list_databases(
         &self,

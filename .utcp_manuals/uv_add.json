@@ -1,0 +1,24 @@
+{
+  "name": "uv_add_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "uv_add",
+      "description": "Add dependency with uv package manager",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "package": { "type": "string", "description": "Package name (e.g. requests>=2.28)" },
+          "dev": { "type": "boolean", "description": "Add as dev dependency (default false)" }
+        },
+        "required": ["package"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "uv",
+        "args": ["add", "${package}", "${dev:+--dev}"]
+      }
+    }
+  ]
+}

@@ -521,6 +521,11 @@ pipeline_compose = [] # Referenced by advanced; #[cfg(feature = "advanced")] in 
 graph_traverse = []   # Referenced by data
 arrow_batch_builder = []  # Referenced by data
 link_predictor = []   # SWARM-003: Link prediction (Adamic-Adar, Jaccard, Preferential Attachment)
+# ISSUE-004: DHT over LMDB — eliminates asyncio.to_thread overhead in DHT hot paths
+# Replaces 10+ asyncio.to_thread() hops with single Rust→Python lmdb calls.
+# Python callers: dht/local_graph.py LocalGraphStore (dual backend with Python fallback).
+# M1 8GB: ~0.5MB compile, GIL-release via py.detach() for LMDB I/O.
+lmdb_dht = []
 lsh_index = []        # Referenced by graph
 hot_edges = []         # Deprecated: module is hot_edges_rs, guarded by graph feature
 # NOTE: hot_edges_rs is the actual module name, hot_edges feature is legacy alias

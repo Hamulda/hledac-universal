@@ -561,7 +561,7 @@ def _normalize_max_results(raw_max: Any) -> int:
     """Validate and normalize max_results parameter."""
     try:
         return max(1, min(int(raw_max), _MAX_HITS))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 20
 
 

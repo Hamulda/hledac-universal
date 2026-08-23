@@ -381,7 +381,7 @@ class MetricsRegistry:
             try:
                 # This triggers _evict_expired in TTLCache.get()
                 _ = self._counter_cache.get(next(iter(self._counter_cache)))
-            except KeyError, StopIteration:
+            except (KeyError, StopIteration):
                 pass
 
     def tick(self) -> None:

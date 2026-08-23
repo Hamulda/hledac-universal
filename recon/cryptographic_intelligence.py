@@ -1360,7 +1360,7 @@ def query_sshfp(domain: str) -> list[SSHFPRecord]:
                         domain=domain,
                     )
                 )
-            except AttributeError, TypeError:
+            except (AttributeError, TypeError):
                 # Malformed record — skip
                 continue
         _sshfp_stats["queries"] += 1

@@ -237,7 +237,7 @@ class TransportRouter:
             if host.endswith(".freenet") or "freenet" in host:
                 return ("freenet", host)
             return ("clearnet", host)
-        except ValueError, OSError:  # urllib raises ValueError for malformed URLs; OSError for IDN encoding failures
+        except (ValueError, OSError):  # urllib raises ValueError for malformed URLs; OSError for IDN encoding failures
             return ("malformed", "")
 
     def _is_nw_connection_candidate(self, url: str, hostname: str = "") -> bool:
@@ -274,7 +274,7 @@ class TransportRouter:
             from hledac.universal.transport.nw_connection_lane import is_nw_connection_available
 
             return is_nw_connection_available()
-        except ValueError, OSError:
+        except (ValueError, OSError):
             return False
 
     def _is_nw_quic_candidate(self, url: str, hostname: str = "") -> bool:
@@ -314,14 +314,14 @@ class TransportRouter:
 
             if _h3_cache_get(hostname) is not True:
                 return False
-        except ValueError, OSError:
+        except (ValueError, OSError):
             return False
         # Lazy check: only probe the Rust extension if we pass the cheap gates
         try:
             from hledac.universal.transport.nw_quic_lane import is_nw_quic_available
 
             return is_nw_quic_available()
-        except ValueError, OSError:
+        except (ValueError, OSError):
             return False
 
     def _is_httpx_h2_candidate(self, url: str, hostname: str = "") -> bool:
@@ -397,7 +397,7 @@ class TransportRouter:
 
             if _h3_cache_get(hostname) is not True:
                 return False
-        except ValueError, OSError:  # cache lookup: ValueError for type errors, OSError for backend failures
+        except (ValueError, OSError):  # cache lookup: ValueError for type errors, OSError for backend failures
             return False
         for suffix in self._API_HOST_SUFFIXES:
             if hostname.endswith(suffix):

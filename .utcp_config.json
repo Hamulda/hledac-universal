@@ -1,0 +1,166 @@
+{
+    "load_variables_from": [
+      {
+        "variable_loader_type": "dotenv",
+        "env_file_path": ".env"
+      }
+    ],
+    "tool_repository": {
+        "tool_repository_type": "in_memory"
+    },
+    "tool_search_strategy": {
+        "tool_search_strategy_type": "tag_and_description_word_match"
+    },
+    "manual_call_templates": [
+        {
+            "name": "crates_io",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"crates_io\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"get_crate_info\",\n      \"description\": \"Získá metadata a závislosti Rust crate z crates.io\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"crate_name\": { \"type\": \"string\", \"description\": \"Název crate\" }\n        },\n        \"required\": [\"crate_name\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"http\",\n        \"url\": \"https://crates.io/api/v1/crates/${crate_name}\",\n        \"http_method\": \"GET\",\n        \"headers\": { \"User-Agent\": \"utcp-agent (macOS-arm64)\" }\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "pypi_api",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"pypi_api\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"get_package_metadata\",\n      \"description\": \"Vrátí metadata Python balíčku z PyPI\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"package_name\": { \"type\": \"string\", \"description\": \"Název balíčku\" }\n        },\n        \"required\": [\"package_name\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"http\",\n        \"url\": \"https://pypi.org/pypi/${package_name}/json\",\n        \"http_method\": \"GET\",\n        \"headers\": { \"User-Agent\": \"utcp-agent (macOS-arm64)\" }\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "bash",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"bash_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"bash\",\n      \"description\": \"Execute bash commands on macOS. Returns command output.\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"command\": { \"type\": \"string\", \"description\": \"bash command to execute\" },\n          \"workdir\": { \"type\": \"string\", \"description\": \"Working directory (optional)\" },\n          \"timeout\": { \"type\": \"number\", \"description\": \"Timeout in seconds (default 120)\" }\n        },\n        \"required\": [\"command\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"bash\",\n        \"args\": [\"-c\", \"${command}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "glob",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"glob_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"glob\",\n      \"description\": \"Find files by glob pattern. Respects .gitignore.\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"pattern\": { \"type\": \"string\", \"description\": \"Glob pattern (e.g. **/*.py, src/**/*.ts)\" },\n          \"path\": { \"type\": \"string\", \"description\": \"Directory to search in (default: cwd)\" }\n        },\n        \"required\": [\"pattern\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"find\",\n        \"args\": [\"${path:-.}\", \"-name\", \"${pattern}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "grep",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"grep_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"grep\",\n      \"description\": \"Search file contents using regex pattern\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"pattern\": { \"type\": \"string\", \"description\": \"Regex pattern to search\" },\n          \"path\": { \"type\": \"string\", \"description\": \"Directory or file to search in\" },\n          \"include\": { \"type\": \"string\", \"description\": \"File glob filter (e.g. *.py)\" }\n        },\n        \"required\": [\"pattern\", \"path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"grep\",\n        \"args\": [\"-rn\", \"${pattern}\", \"${path}\", \"--include=${include:-*}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "read_file",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"read_file_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"read_file\",\n      \"description\": \"Read file contents with line offset and limit\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Absolute file path\" },\n          \"offset\": { \"type\": \"number\", \"description\": \"Line offset (1-indexed, default 1)\" },\n          \"limit\": { \"type\": \"number\", \"description\": \"Max lines to read (default 0 = all)\" }\n        },\n        \"required\": [\"path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"sed\",\n        \"args\": [\"-n\", \"${offset:-1},${limit:-}p\", \"${path}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "write_file",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"write_file_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"write_file\",\n      \"description\": \"Write content to a file, creating or overwriting it\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Absolute file path\" },\n          \"content\": { \"type\": \"string\", \"description\": \"File content to write\" }\n        },\n        \"required\": [\"path\", \"content\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"tee\",\n        \"args\": [\"${path}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "list_dir",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"list_dir_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"list_dir\",\n      \"description\": \"List directory contents alphabetically\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Directory path\" }\n        },\n        \"required\": [\"path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"ls\",\n        \"args\": [\"-1\", \"${path}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "web_fetch",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"web_fetch_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"web_fetch\",\n      \"description\": \"Fetch URL content with format conversion (markdown/text/html)\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"url\": { \"type\": \"string\", \"description\": \"URL to fetch\" },\n          \"format\": { \"type\": \"string\", \"description\": \"Output format: markdown, text, or html\", \"enum\": [\"markdown\", \"text\", \"html\"] },\n          \"timeout\": { \"type\": \"number\", \"description\": \"Timeout in seconds (default 30, max 120)\" }\n        },\n        \"required\": [\"url\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"http\",\n        \"url\": \"${url}\",\n        \"http_method\": \"GET\",\n        \"headers\": { \"User-Agent\": \"UTCP-Agent/1.0 (macOS-arm64)\" }\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "pytest",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"pytest_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"pytest\",\n      \"description\": \"Run pytest with options. Use --timeout=30 -q for fast testing.\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Test path or directory (default: tests/)\" },\n          \"args\": { \"type\": \"string\", \"description\": \"pytest arguments (e.g. -x --timeout=30)\" }\n        }\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"pytest\",\n        \"args\": [\"${path:-tests/}\", \"${args:- -x --timeout=30 -q}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "ruff_check",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"ruff_check_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"ruff_check\",\n      \"description\": \"Run ruff linter with optional auto-fix\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Path to lint (file or directory)\" },\n          \"fix\": { \"type\": \"boolean\", \"description\": \"Auto-fix issues if true\" }\n        },\n        \"required\": [\"path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"ruff\",\n        \"args\": [\"check\", \"${path}\", \"${fix:--fix}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "ruff_format",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"ruff_format_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"ruff_format\",\n      \"description\": \"Format Python files with ruff\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"File or directory to format\" },\n          \"check\": { \"type\": \"boolean\", \"description\": \"Check only, don't write (default false)\" }\n        },\n        \"required\": [\"path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"ruff\",\n        \"args\": [\"format\", \"${path}\", \"${check:--check}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "uv_sync",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"uv_sync_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"uv_sync\",\n      \"description\": \"Sync dependencies with uv package manager\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"extra\": { \"type\": \"string\", \"description\": \"Extra dependencies to include (e.g. mlx-embed)\" }\n        }\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"uv\",\n        \"args\": [\"sync\", \"${extra:+--extra}\", \"${extra:-}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "uv_add",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"uv_add_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"uv_add\",\n      \"description\": \"Add dependency with uv package manager\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"package\": { \"type\": \"string\", \"description\": \"Package name (e.g. requests>=2.28)\" },\n          \"dev\": { \"type\": \"boolean\", \"description\": \"Add as dev dependency (default false)\" }\n        },\n        \"required\": [\"package\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"uv\",\n        \"args\": [\"add\", \"${package}\", \"${dev:+--dev}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "git",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"git_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"git_status\",\n      \"description\": \"Show git working tree status\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Repository path (default: cwd)\" }\n        }\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"git\",\n        \"args\": [\"-C\", \"${path:-.}\", \"status\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "httpie",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"httpie_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"http_get\",\n      \"description\": \"Send GET request using HTTPie\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"url\": { \"type\": \"string\", \"description\": \"URL to request\" }\n        },\n        \"required\": [\"url\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"http\",\n        \"args\": [\"GET\", \"${url}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "jq",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"jq_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"jq_query\",\n      \"description\": \"Query JSON with jq filter\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"filter\": { \"type\": \"string\", \"description\": \"jq filter (e.g. '.key', '.[] | .name')\" },\n          \"input\": { \"type\": \"string\", \"description\": \"JSON input string\" }\n        },\n        \"required\": [\"filter\", \"input\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"jq\",\n        \"args\": [\"${filter}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "tmux",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"tmux_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"tmux_sessions\",\n      \"description\": \"List all tmux sessions\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"tmux\",\n        \"args\": [\"list-sessions\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "fd",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"fd_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"fd_find\",\n      \"description\": \"Fast find alternative - find files by pattern\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"pattern\": { \"type\": \"string\", \"description\": \"Search pattern\" },\n          \"path\": { \"type\": \"string\", \"description\": \"Directory to search\" },\n          \"extension\": { \"type\": \"string\", \"description\": \"Filter by extension (e.g. .py)\" }\n        },\n        \"required\": [\"pattern\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"fd\",\n        \"args\": [\"${pattern}\", \"${path:-.}\", \"${extension:+-e}\", \"${extension:-}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "bat",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"bat_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"bat_view\",\n      \"description\": \"Cat alternative with syntax highlighting\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"File to view\" },\n          \"language\": { \"type\": \"string\", \"description\": \"Force language\" }\n        },\n        \"required\": [\"path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"bat\",\n        \"args\": [\"${path}\", \"${language:+--language=}\", \"${language:-}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "exa",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"exa_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"exa_list\",\n      \"description\": \"Modern ls replacement with colors and icons\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Directory to list\" },\n          \"long\": { \"type\": \"boolean\", \"description\": \"Long format\" },\n          \"recursive\": { \"type\": \"boolean\", \"description\": \"Recursive listing\" }\n        }\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"exa\",\n        \"args\": [\"${path:-.}\", \"${long:+-l}\", \"${recursive:+-R}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "fzf",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"fzf_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"fzf_files\",\n      \"description\": \"Fuzzy file finder\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Directory to search\" },\n          \"query\": { \"type\": \"string\", \"description\": \"Initial query\" }\n        }\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"fzf\",\n        \"args\": [\"--query=${query:-}\", \"${path:-}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "gh",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"gh_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"gh_issue_list\",\n      \"description\": \"List GitHub issues\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"repo\": { \"type\": \"string\", \"description\": \"Repository (owner/repo)\" },\n          \"state\": { \"type\": \"string\", \"description\": \"Filter: open, closed, all\" },\n          \"limit\": { \"type\": \"number\", \"description\": \"Max results\" }\n        },\n        \"required\": [\"repo\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"gh\",\n        \"args\": [\"issue\", \"list\", \"-R\", \"${repo}\", \"--state=${state:-open}\", \"-L\", \"${limit:-50}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "lazygit",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"lazygit_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"lazygit_check\",\n      \"description\": \"Check if lazygit is installed\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"which\",\n        \"args\": [\"lazygit\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "hashline_tools",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"hashline_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"read_hashed_file\",\n      \"description\": \"Přečte soubor s 4-znakovými hashi na řádek pro bezpečné adresování změn.\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"file_path\": { \"type\": \"string\", \"description\": \"Cesta k souboru\" }\n        },\n        \"required\": [\"file_path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"python3\",\n        \"args\": [\".utcp_tools/hashline.py\", \"read\", \"${file_path}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "ast_grep_tools",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"ast_grep_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"ast_search\",\n      \"description\": \"Vyhledá strukturální vzor v kódu v JSON formátu.\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"pattern\": { \"type\": \"string\", \"description\": \"AST vzor s proměnnými jako $NAME nebo $$$ARGS\" },\n          \"language\": { \"type\": \"string\", \"description\": \"Jazyk (python, rust, js, ts)\" },\n          \"path\": { \"type\": \"string\", \"description\": \"Cesta k souboru nebo adresáři\" }\n        },\n        \"required\": [\"pattern\", \"language\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"ast-grep\",\n        \"args\": [\"search\", \"--pattern=${pattern}\", \"--lang=${language}\", \"${path:-.}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "skeleton_tools",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"skeleton_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"get_file_skeleton\",\n      \"description\": \"Vrátí pouze signatury funkcí bez implementačních detailů.\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"file_path\": { \"type\": \"string\", \"description\": \"Cesta k Python souboru\" }\n        },\n        \"required\": [\"file_path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"python3\",\n        \"args\": [\".utcp_tools/skeleton.py\", \"${file_path}\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "diff_validator",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"diff_validator_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"validate_git_diff\",\n      \"description\": \"Zkontroluje syntaxi a chyby pouze u souborů modifikovaných v gitu.\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"scope\": { \"type\": \"string\", \"description\": \"Rozsah: python, rust nebo all\" }\n        },\n        \"required\": [\"scope\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"git\",\n        \"args\": [\"diff\", \"--name-only\"]\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "web_search",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"web_search_manual\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"web_search\",\n      \"description\": \"Search the web using Exa AI for real-time information\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"query\": { \"type\": \"string\", \"description\": \"Search query\" },\n          \"num_results\": { \"type\": \"number\", \"description\": \"Number of results (default 8)\" }\n        },\n        \"required\": [\"query\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"http\",\n        \"url\": \"https://api.exa.ai/search\",\n        \"http_method\": \"POST\",\n        \"headers\": {\n          \"Content-Type\": \"application/json\",\n          \"Authorization\": \"Bearer ${EXA_API_KEY}\"\n        }\n      }\n    }\n  ]\n}"
+        },
+        {
+            "name": "ruff",
+            "call_template_type": "text",
+            "content": "{\n  \"name\": \"local_ruff\",\n  \"manual_version\": \"1.0.0\",\n  \"utcp_version\": \"1.0.1\",\n  \"tools\": [\n    {\n      \"name\": \"check_python_code\",\n      \"description\": \"Spustí ruff linter a vrátí nalezené chyby v JSON formátu\",\n      \"inputs\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"path\": { \"type\": \"string\", \"description\": \"Cesta k souboru nebo složce\" }\n        },\n        \"required\": [\"path\"]\n      },\n      \"tool_call_template\": {\n        \"call_template_type\": \"cli\",\n        \"command\": \"ruff\",\n        \"args\": [\"check\", \"${path}\", \"--output-format\", \"json\"]\n      }\n    }\n  ]\n}"
+        }
+    ]
+}

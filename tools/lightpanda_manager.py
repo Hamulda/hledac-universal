@@ -34,7 +34,7 @@ def get_nodriver_available() -> bool:
             import nodriver
 
             _NODRIVER_AVAILABLE = True
-        except ImportError, SyntaxError:
+        except (ImportError, SyntaxError):
             _NODRIVER_AVAILABLE = False
     return _NODRIVER_AVAILABLE
 

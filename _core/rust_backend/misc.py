@@ -5,13 +5,10 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-# Issue R-17: Deprecation markers for domains where Python fallback always wins
-_DEPRECATED_RUST_DOMAINS: set[str] = {
-    "_RustGraphDomain",  # Rust has incompatible signature → Python always wins
-    "_RustXmlDomain",  # Rust sanitize_xml absent on older builds → Python fallback
-    # NOTE: _RustSimdDomain removed - uses proper SIMDSimilarityIntegration via
-    # rust_extensions.wiring.simd_similarity_wiring (not this deprecated path)
-}
+# Deprecation markers for domains where Python fallback always wins:
+# - _RustGraphDomain (misc.py:66): Rust has incompatible signature → Python always wins
+# - _RustXmlDomain (misc.py:594): Rust sanitize_xml may be absent on older builds → Python fallback
+# - _RustSimdDomain lives in simd.py with proper FFI circuit breaker integration (NOT deprecated)
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -659,28 +656,19 @@ class _PythonIntCounterDomain:
         return _PythonIntCounterLayout(field_names)
 
 
-class _RustSimdDomain:
-    __slots__ = ("_ext",)
-
-    def __init__(self, ext: hledac_rust_extensions) -> None:
-        warnings.warn(
-            "[R-17] _RustSimdDomain is deprecated: "
-            "Rust batch_cosine_scores has incompatible signature — Python fallback always wins",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._ext = ext
-
-    def cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        # Rust batch_cosine_scores has incompatible signature — use Python fallback
-        return _python_cosine_similarity(a, b)
-
-    def batch_cosine_similarity(self, vectors: list[list[float]], query: list[float]) -> list[float]:
-        # Rust batch_cosine_scores requires num_queries/num_candidates/dim — use Python fallback
-        return _python_batch_cosine_similarity(vectors, query)
-
-
 class _PythonSimdDomain:
+    """
+    Python fallback SIMD domain for differential testing.
+
+    NOTE: This is a SEPARATE implementation from simd.py:_PythonSimdDomain.
+    - misc.py version: uses _python_cosine_similarity (math.sqrt norm)
+    - simd.py version: imports from utils._patterns.cosine_similarity (** 0.5 norm)
+
+    Both are within ±1e-6 tolerance and produce equivalent results for testing.
+    This class exists to provide a known "gold standard" reference for
+    test_differential_fuzzing.py comparisons against Rust implementations.
+    """
+
     __slots__ = ()
 
     @staticmethod
@@ -1460,12 +1448,6 @@ def get_int_counter_domain(ext: object | None) -> _RustIntCounterDomain | _Pytho
     if ext is not None:
         return _RustIntCounterDomain(ext)
     return _PythonIntCounterDomain()
-
-
-def get_simd_domain(ext: object | None) -> _RustSimdDomain | _PythonSimdDomain:
-    if ext is not None:
-        return _RustSimdDomain(ext)
-    return _PythonSimdDomain()
 
 
 def get_sprint_policies_domain(ext: object | None) -> _RustSprintPoliciesDomain | _PythonSprintPoliciesDomain:

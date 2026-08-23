@@ -505,7 +505,7 @@ def lmdb_map_size() -> int:
 
         try:
             mb = int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 256))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             mb = 256
         return max(mb, 1) * 1024 * 1024
 
@@ -530,7 +530,7 @@ def get_lmdb_max_size_mb() -> int:
 
         try:
             return int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 256))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return 256
 
 
@@ -1088,7 +1088,7 @@ def _is_socket_orphaned(sock_path: Path) -> bool:
         return False
     except ConnectionRefusedError:
         return True
-    except OSError, FileNotFoundError:
+    except (OSError, FileNotFoundError):
         return True
     finally:
         try:

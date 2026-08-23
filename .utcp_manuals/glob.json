@@ -1,0 +1,24 @@
+{
+  "name": "glob_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "glob",
+      "description": "Find files by glob pattern. Respects .gitignore.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string", "description": "Glob pattern (e.g. **/*.py, src/**/*.ts)" },
+          "path": { "type": "string", "description": "Directory to search in (default: cwd)" }
+        },
+        "required": ["pattern"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "find",
+        "args": ["${path:-.}", "-type", "f", "-name", "${pattern}"]
+      }
+    }
+  ]
+}

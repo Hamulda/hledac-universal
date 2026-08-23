@@ -1,0 +1,24 @@
+{
+  "name": "ruff_format_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "ruff_format",
+      "description": "Format Python files with ruff",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "File or directory to format" },
+          "check": { "type": "boolean", "description": "Check only, don't write (default false)" }
+        },
+        "required": ["path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "ruff",
+        "args": ["format", "${path}", "${check:--check}"]
+      }
+    }
+  ]
+}

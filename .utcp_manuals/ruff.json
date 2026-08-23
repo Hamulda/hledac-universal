@@ -1,0 +1,23 @@
+{
+  "name": "local_ruff",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "check_python_code",
+      "description": "Spustí ruff linter a vrátí nalezené chyby v JSON formátu",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Cesta k souboru nebo složce" }
+        },
+        "required": ["path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "ruff",
+        "args": ["check", "${path}", "--output-format", "json"]
+      }
+    }
+  ]
+}

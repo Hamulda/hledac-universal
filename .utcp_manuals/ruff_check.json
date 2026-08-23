@@ -1,0 +1,24 @@
+{
+  "name": "ruff_check_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "ruff_check",
+      "description": "Run ruff linter with optional auto-fix",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Path to lint (file or directory)" },
+          "fix": { "type": "boolean", "description": "Auto-fix issues if true" }
+        },
+        "required": ["path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "ruff",
+        "args": ["check", "${path}", "${fix:--fix}"]
+      }
+    }
+  ]
+}

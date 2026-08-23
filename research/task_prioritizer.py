@@ -175,7 +175,7 @@ class TaskPrioritizerWrapper:
                 import mlx.optimizers as optim
 
                 self.optimizer = optim.Adam(learning_rate=0.001)
-            except ImportError, AttributeError:
+            except (ImportError, AttributeError):
                 self.optimizer = None
         else:
             self.optimizer = None

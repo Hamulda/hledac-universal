@@ -491,7 +491,7 @@ def _init_rust_compression() -> None:
         _decompress_available = _rust_decompress is not None
         _batch_compress_available = _rust_batch_compress is not None
         _batch_decompress_available = _rust_batch_decompress is not None
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         pass
 
 

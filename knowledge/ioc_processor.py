@@ -21,11 +21,14 @@ M1 8GB: All bounded, fail-safe, no recursion.
 
 from __future__ import annotations
 
+import logging
 import time as _time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rust_extensions.wiring.dedup_bloom_wiring import DedupBloom
+
+_logger = logging.getLogger(__name__)
 
 from urllib.parse import parse_qsl as _parse_qsl
 from urllib.parse import urlencode as _urlencode
@@ -64,8 +67,9 @@ def _get_dedup_bloom() -> DedupBloom | None:
         try:
             from rust_extensions.wiring.dedup_bloom_wiring import get_dedup_bloom
 
-            _dedup_bloom = get_dedup_bloom("/tmp/hledac/ioc_dedup_bloom")
-        except Exception:
+            _dedup_bloom = get_dedup_bloom()
+        except Exception as exc:
+            _logger.debug("DedupBloom unavailable: %s", exc)
             _dedup_bloom = None
     return _dedup_bloom
 
@@ -665,7 +669,7 @@ class IOCProcessor:
                 results.extend(chunk_results)
 
             return results
-        except ImportError, RuntimeError:
+        except (ImportError, RuntimeError):
             # Fallback: rayon unavailable — sequential extraction with deobfuscation
             results: list[tuple[int, str, str]] = []
             for idx, text in enumerate(texts):
@@ -770,7 +774,7 @@ class IOCProcessor:
                 results.extend([r[1] for r in chunk_results])
 
             return results
-        except ImportError, RuntimeError:
+        except (ImportError, RuntimeError):
             # Fallback: rayon unavailable — use ThreadPoolExecutor with deobfuscation
             import os as _os
             from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor

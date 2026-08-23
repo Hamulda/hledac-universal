@@ -1027,7 +1027,7 @@ async def search_academic(query: str, max_results: int = MAX_ACADEMIC_PAPERS) ->
                 if year_elem:
                     try:
                         year = int(year_elem.text())
-                    except ValueError, TypeError:  # noqa: BLE001
+                    except (ValueError, TypeError):  # noqa: BLE001
                         pass
                 results.append(
                     AcademicPaper(

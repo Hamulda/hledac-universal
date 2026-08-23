@@ -117,7 +117,7 @@ class _RustIocDomain:
         """
         try:
             return self._ext.extract_iocs_zero_copy(texts)
-        except AttributeError, RuntimeError:
+        except (AttributeError, RuntimeError):
             # Fallback to batch_extract_iocs_simd if zero_copy not available
             return self.batch_extract_iocs_simd(texts)
 

@@ -292,8 +292,14 @@ RUST_MODULES: dict[str, dict] = {
         "status": "ACTIVE",
         "feature": "native_db",
         "description": "MongoDB/Redis/ES wire protocol extraction",
-        "python_callers": ["_core/rust_backend/__init__.py"],
-        "api": ["MongoDumper", "RedisDumper", "ElasticsearchDumper"],
+        "python_callers": [
+            "_core/rust_backend/__init__.py",
+            "recon/exposed_service_hunter.py",
+            "network/native_extraction.py",
+            "recon/native_db_client.py",
+            "dht/torrent_harvester.py",  # Tier 0 MongoDB hello detector
+        ],
+        "api": ["MongoDumper", "RedisDumper", "ElasticsearchDumper", "MongoDumper.ping"],
     },
     "madvise": {
         "status": "ACTIVE",
@@ -408,12 +414,16 @@ RUST_MODULES: dict[str, dict] = {
         "note": "Not yet integrated",
     },
     "dedup_bloom": {
-        "status": "DORMANT",
+        "status": "AKTIVNI",
         "feature": "advanced",
-        "description": "Bloom filter deduplication",
-        "python_callers": [],
-        "api": ["DedupBloom"],
-        "note": "Not yet integrated",
+        "description": "Distributed multi-tier BloomFilter for cross-instance URL dedup",
+        "python_callers": [
+            "coordinators/fetch_coordinator.py",
+            "knowledge/ioc_processor.py",
+            "utils/ioc_extract.py",
+        ],
+        "api": ["DedupBloom", "get_dedup_bloom"],
+        "note": "B4: Two-phase parallel add_batch (rayon hashing + serial filter update)",
     },
     "pipeline_compose": {
         "status": "DORMANT",
@@ -818,11 +828,11 @@ RUST_MODULES: dict[str, dict] = {
         "note": "No Python callers found. Consider removal if not planned.",
     },
     "lmdb_dht": {
-        "status": "ZOMBIE",
+        "status": "AKTIVNÍ",
         "feature": "lmdb_dht",
-        "description": "LMDB DHT",
-        "python_callers": [],
-        "note": "No Python callers found. Consider removal if not planned.",
+        "description": "DHT over LMDB — eliminates asyncio.to_thread overhead",
+        "python_callers": ["dht/local_graph.py:LocalGraphStore"],
+        "note": "ISS UE-004: Python callers use dynamic hasattr() — audit miss.",
     },
     "metal_hashcrack": {
         "status": "ZOMBIE",

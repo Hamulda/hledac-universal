@@ -24,7 +24,7 @@ def clamp_confidence(value: object, default: float = 0.5) -> float:
         return default
     try:
         f = float(value)  # type: ignore[arg-type]
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return default
     return max(0.0, min(1.0, f))
 
@@ -46,7 +46,7 @@ def normalize_source_quality(score: int | float | None) -> float:
         return 0.5
     try:
         f = float(score)  # type: ignore[arg-type]
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 0.5
     # Distinguish 0-90 range from 0-1 range by magnitude
     if f > 1.0:

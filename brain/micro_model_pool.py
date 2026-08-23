@@ -43,8 +43,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-import mlx.core as mx
-import mlx_lm
+from hledac.universal.utils.optional_imports import get_mlx_core, get_mlx_lm, MLX_AVAILABLE
 
 try:
     import orjson
@@ -90,6 +89,9 @@ class UmaFragmentationMonitor:
         """
         if not self._enabled:
             return 0
+        mx = get_mlx_core()
+        if mx is None:
+            return 0
         try:
             if hasattr(mx, "metal") and hasattr(mx.metal, "get_active_memory"):
                 return mx.metal.get_active_memory()
@@ -105,6 +107,9 @@ class UmaFragmentationMonitor:
             Wired memory in bytes, or 0 if unavailable
         """
         if not self._enabled:
+            return 0
+        mx = get_mlx_core()
+        if mx is None:
             return 0
         try:
             if hasattr(mx, "metal") and hasattr(mx.metal, "get_wired_memory"):
@@ -138,11 +143,21 @@ class UmaFragmentationMonitor:
 
         This is CRITICAL for batch preload - must be called BEFORE loading
         first model to ensure contiguous UMA allocation.
+
+        P0-2 FIX: Correct order is gc.collect -> mx.eval([]) barrier -> clear_cache()
         """
         if not self._enabled:
             return
+        mx = get_mlx_core()
+        if mx is None:
+            return
+        gc.collect()  # 1. Release Python refs first
         try:
-            mx.clear_cache()
+            mx.eval([])  # 2. BARRIER - flush GPU queue before clear_cache
+        except Exception:
+            pass
+        try:
+            mx.clear_cache()  # 3. NOW actually frees memory
         except Exception:
             pass
         try:
@@ -150,11 +165,7 @@ class UmaFragmentationMonitor:
                 mx.metal.clear_cache()
         except Exception:
             pass
-        gc.collect()
-        try:
-            mx.eval([])
-        except Exception:
-            pass
+        gc.collect()  # 4. Final cleanup for circular refs
 
     def calculate_fragmentation_score(self) -> float:
         """
@@ -455,6 +466,9 @@ class MicroModelPool:
         ISSUE-022-06: Separating weight loading from warmup allows
         batch warmup after all weights are contiguous in memory.
         """
+        mlx_lm = get_mlx_lm()
+        if mlx_lm is None:
+            raise RuntimeError(f"Cannot load {model_id}: mlx_lm not available")
         if model_id in self._loaded:
             return self._update_lru(model_id)
         spec = MICRO_MODELS.get(model_id)
@@ -502,6 +516,9 @@ class MicroModelPool:
 
     def load_model(self, model_id: str, warmup: bool = True, wire_memory: bool = True) -> LoadedMicroModel:
         """Load a micro-model into UMA memory with TRUE ZERO-COPY support."""
+        mlx_lm = get_mlx_lm()
+        if mlx_lm is None:
+            raise RuntimeError(f"Cannot load {model_id}: mlx_lm not available")
         if model_id in self._loaded:
             return self._update_lru(model_id)
         spec = MICRO_MODELS.get(model_id)
@@ -546,6 +563,9 @@ class MicroModelPool:
 
     def _finalize_uma_wiring(self) -> bool:
         """TRUE ZERO-COPY: Finalize UMA wiring with single set_wired_memory call."""
+        mx = get_mlx_core()
+        if mx is None:
+            return False
         try:
             if hasattr(mx, "metal") and hasattr(mx.metal, "set_wired_memory"):
                 total_mem = self._total_loaded_bytes
@@ -559,6 +579,10 @@ class MicroModelPool:
 
     def _warmup_model(self, loaded: LoadedMicroModel) -> None:
         """Warmup model for faster first inference."""
+        mx = get_mlx_core()
+        mlx_lm = get_mlx_lm()
+        if mx is None or mlx_lm is None:
+            return
         try:
             if loaded.spec.task_type == TaskType.EMBEDDINGS:
                 warmup_text = "Hello world"
@@ -670,6 +694,9 @@ class MicroModelPool:
 
     def generate(self, model_id: str, prompt: str, max_tokens: int = 256, temp: float = 0.7, **kwargs) -> str:
         """Generate text using the specified micro-model."""
+        mlx_lm = get_mlx_lm()
+        if mlx_lm is None:
+            raise RuntimeError("Cannot generate: mlx_lm not available")
         loaded = self.get_model(model_id)
         if loaded is None:
             raise RuntimeError(f"Cannot load micro-model: {model_id}")
@@ -684,6 +711,9 @@ class MicroModelPool:
         self, loaded: LoadedMicroModel, text: str, pool_type: str = "mean", normalize: bool = True, **kwargs
     ) -> str:
         """Generate embeddings for text using embedding model."""
+        mx = get_mlx_core()
+        if mx is None:
+            raise RuntimeError("Embedding generation failed: mlx.core not available")
         try:
             if hasattr(loaded.tokenizer, "encode"):
                 tokens = loaded.tokenizer.encode(text, return_tensors="np")

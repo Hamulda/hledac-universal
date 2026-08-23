@@ -176,7 +176,7 @@ def _get_rust_swarm_fabric() -> Any | None:
         import rust
 
         return rust.swarm_fabric.SwarmFabric()
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         return None
 
 

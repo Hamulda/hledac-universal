@@ -55,6 +55,37 @@ _DHT_HARVEST_ENABLED: bool = os.getenv("HLEDAC_ENABLE_DHT_METADATA_HARVEST", "0"
 # Shared metadata cache — survives across harvest calls
 _metadata_cache: TTLCache = TTLCache(maxsize=METADATA_CACHE_MAXSIZE, ttl=METADATA_CACHE_TTL)
 
+# ── Tier 0: MongoDB Hello Packet Detector State ─────────────────────────────────
+
+# Gate for MongoDB Tier 0 detection
+_MONGODB_TIER0_ENABLED: bool = os.getenv("HLEDAC_ENABLE_MONGODB_TIER0", "0").lower() in ("1", "true", "yes", "on")
+
+# MongoDB default port
+_MONGODB_DEFAULT_PORT: int = 27017
+
+# Max hosts to check in one batch (M1 8GB memory budget)
+_MONGODB_TIER0_BATCH_SIZE: int = 50
+
+# Module-level MongoDumper class (lazy-loaded, cached after first probe)
+_MongoDumper_cls: Any = None
+_MongoDumper_probed: bool = False
+
+
+def _get_mongo_dumper() -> Any | None:
+    """Get MongoDumper class from Rust native_db (lazy, cached)."""
+    global _MongoDumper_cls, _MongoDumper_probed
+    if _MongoDumper_probed:
+        return _MongoDumper_cls
+    _MongoDumper_probed = True
+    try:
+        from hledac.universal._core.rust_backend import rust
+
+        _raw = rust.raw.module
+        _MongoDumper_cls = getattr(_raw, "MongoDumper", None)
+    except Exception:
+        _MongoDumper_cls = None
+    return _MongoDumper_cls
+
 
 async def harvest_torrent_metadata(
     info_hashes: list[str],
@@ -523,14 +554,112 @@ def collect_info_hashes_from_crawl_results(
     return result
 
 
+# ── Tier 0: MongoDB Hello Packet Detector ────────────────────────────────────────
+
+# Gate for MongoDB Tier 0 detection
+_MONGODB_TIER0_ENABLED: bool = os.getenv("HLEDAC_ENABLE_MONGODB_TIER0", "0").lower() in ("1", "true", "yes", "on")
+
+# MongoDB default port
+_MONGODB_DEFAULT_PORT: int = 27017
+
+# Max hosts to check in one batch (M1 8GB memory budget)
+_MONGODB_TIER0_BATCH_SIZE: int = 50
+
+
+async def detect_mongodb_on_hosts(
+    hosts: list[str],
+    port: int = _MONGODB_DEFAULT_PORT,
+    timeout_s: float = 5.0,
+) -> list[tuple[str, int]]:
+    """Tier 0: Fast MongoDB hello packet detector.
+
+    Uses Rust native_db MongoDumper.ping() for sub-10ms per-host detection.
+    This is the fastest way to detect exposed MongoDB instances.
+
+    Architecture:
+        Python (async)
+          → asyncio.to_thread()  # Rust blocking call
+            → MongoDumper.ping(host, port)  # Tier 0 in native_db.rs
+              → TCP connect (2s timeout)
+              → OP_MSG ping (5s timeout)
+              → bool response
+
+    Args:
+        hosts: List of hostnames or IP addresses to check
+        port: MongoDB port (default 27017)
+        timeout_s: Per-host timeout in seconds (default 5.0)
+
+    Returns:
+        List of (host, port) tuples where MongoDB was detected.
+        Empty list if HLEDAC_ENABLE_MONGODB_TIER0 is not "1" or no MongoDB found.
+
+    M1 8GB Safety:
+        - Batched parallel detection (max 10 concurrent via semaphore)
+        - 5s timeout per host
+        - Fail-soft: individual failures don't block others
+    """
+    if not _MONGODB_TIER0_ENABLED:
+        return []
+
+    if not hosts:
+        return []
+
+    # Deduplicate and cap batch size
+    unique_hosts = list(dict.fromkeys(hosts))[:_MONGODB_TIER0_BATCH_SIZE]
+
+    # Get MongoDumper class (lazy-loaded once)
+    MongoDumper_cls = _get_mongo_dumper()
+    if MongoDumper_cls is None:
+        logger.debug("[Tier-0 MongoDB] Rust native_db MongoDumper not available")
+        return []
+
+    def _probe_once(host: str) -> tuple[str, int] | None:
+        """Probe single host for MongoDB (runs in thread pool)."""
+        try:
+            dumper = MongoDumper_cls()
+            if dumper.ping(host, port, timeout_s):
+                return (host, port)
+        except Exception:
+            pass
+        return None
+
+    # Run probes in parallel with semaphore limit
+    results: list[tuple[str, int]] = []
+    sem = asyncio.Semaphore(10)  # Max 10 concurrent probes
+
+    async def _bounded_probe(host: str) -> tuple[str, int] | None:
+        async with sem:
+            return await asyncio.to_thread(_probe_once, host)
+
+    tasks = [_bounded_probe(h) for h in unique_hosts]
+    probe_results = await parallel_ok(*tasks, label="torrent_harvester:mongodb_tier0")
+
+    for result in probe_results:
+        if result is not None:
+            results.append(result)
+
+    if results:
+        logger.info(
+            "[Tier-0 MongoDB] Detected %d MongoDB instances out of %d hosts checked",
+            len(results),
+            len(unique_hosts),
+        )
+
+    return results
+
+
 def get_harvester_status() -> dict:
     """Get harvester status for monitoring (ISSUE-006)."""
     return {
-        "enabled": _DHT_HARVEST_ENABLED,
-        "gate": "HLEDAC_ENABLE_DHT_METADATA_HARVEST",
+        "dht_harvest_enabled": _DHT_HARVEST_ENABLED,
+        "dht_gate": "HLEDAC_ENABLE_DHT_METADATA_HARVEST",
         "max_concurrent_fetches": 5,  # from TorrentMetadataFetcher
         "max_info_hashes": MAX_INFO_HASHES_PER_HARVEST,
         "cache_size": len(_metadata_cache),
         "cache_maxsize": METADATA_CACHE_MAXSIZE,
         "cache_ttl_s": METADATA_CACHE_TTL,
+        # Tier 0 MongoDB detector
+        "mongodb_tier0_enabled": _MONGODB_TIER0_ENABLED,
+        "mongodb_tier0_gate": "HLEDAC_ENABLE_MONGODB_TIER0",
+        "mongodb_tier0_available": _MongoDumper_cls is not None,
     }

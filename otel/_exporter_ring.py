@@ -9,6 +9,23 @@ try:
 except ImportError:
     SpanExportResult = None
 
+# WIRING_COMPLETE I2: Lock-free Rust counters for hot-path telemetry
+try:
+    from hledac_rust_extensions import hledac_rust_extensions as _rust_ext
+
+    _RUST_AVAILABLE = hasattr(_rust_ext, "create_counter")
+    if _RUST_AVAILABLE:
+        _EXPORTED_COUNTER = _rust_ext.create_counter("otel_ring_exported")
+        _FAILED_COUNTER = _rust_ext.create_counter("otel_ring_failed")
+    else:
+        _RUST_AVAILABLE = False
+        _EXPORTED_COUNTER = None
+        _FAILED_COUNTER = None
+except ImportError:
+    _RUST_AVAILABLE = False
+    _EXPORTED_COUNTER = None
+    _FAILED_COUNTER = None
+
 
 def _to_record(span: Any, max_attrs: int) -> dict[str, Any]:
     """Compress ReadableSpan -> bounded dict (M1 8GB friendly)."""
@@ -37,28 +54,37 @@ class RingBufferExporter:
 
     Test-friendly: every span ends up addressable in the ring by (trace_id, span_id).
     Bounded: ring evicts oldest when full.
+
+    WIRING_COMPLETE I2: Uses Rust lock-free counters for exported/failed stats.
+    threading.Lock still protects ring.put() for thread-safe OrderedDict access.
     """
 
-    __slots__ = ("_exported", "_failed", "_lock", "_max_attrs", "_ring")
+    __slots__ = ("_lock", "_max_attrs", "_ring")
 
     def __init__(self, ring: Any, max_attrs: int = 32) -> None:
         self._ring = ring
         self._max_attrs = max(1, min(128, int(max_attrs)))
         self._lock = threading.Lock()
-        self._exported = 0
-        self._failed = 0
 
     def export(self, spans: Sequence[Any]) -> Any:
         if not spans:
             return SpanExportResult.SUCCESS if SpanExportResult is not None else 0
+        exported_count = 0
+        failed_count = 0
         with self._lock:
             for sp in spans:
                 try:
                     rec = _to_record(sp, self._max_attrs)
                     self._ring.put((rec["trace_id"], rec["span_id"]), rec)
-                    self._exported += 1
+                    exported_count += 1
                 except Exception:
-                    self._failed += 1
+                    failed_count += 1
+        # WIRING_COMPLETE I2: Lock-free counter increments after lock release
+        # Rust MPSC is lock-free on sender side - no GIL contention
+        if _EXPORTED_COUNTER is not None and exported_count > 0:
+            _EXPORTED_COUNTER.add(exported_count, 0)
+        if _FAILED_COUNTER is not None and failed_count > 0:
+            _FAILED_COUNTER.add(failed_count, 0)
         return SpanExportResult.SUCCESS if SpanExportResult is not None else 0
 
     def shutdown(self) -> None:
@@ -68,5 +94,9 @@ class RingBufferExporter:
         return True
 
     def stats(self) -> dict[str, int]:
-        with self._lock:
-            return {"exported": self._exported, "failed": self._failed}
+        # WIRING_COMPLETE I2: Read from Rust counters (lock-free)
+        if _RUST_AVAILABLE and _EXPORTED_COUNTER is not None and _FAILED_COUNTER is not None:
+            exported, _ = _EXPORTED_COUNTER.get()
+            failed, _ = _FAILED_COUNTER.get()
+            return {"exported": exported, "failed": failed}
+        return {"exported": 0, "failed": 0}

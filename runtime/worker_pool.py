@@ -483,11 +483,11 @@ class RustWorkerPool:
             # Parse hex strings to integers; filter "0"*N all-zeros as "no trace"
             try:
                 trace_id: int | None = int(trace_id_raw, 16) if trace_id_raw and trace_id_raw != "0" * 32 else None
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 trace_id = None
             try:
                 span_id: int | None = int(span_id_raw, 16) if span_id_raw and span_id_raw != "0" * 16 else None
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 span_id = None
         else:
             trace_id = None

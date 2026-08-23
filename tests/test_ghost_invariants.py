@@ -48,6 +48,7 @@ import pytest
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 SRC_DIRS = [
+    ROOT,
     ROOT / "brain",
     ROOT / "core",
     ROOT / "runtime",

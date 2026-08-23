@@ -5,6 +5,8 @@ Format: subset of OTLP/JSON — https://opentelemetry.io/docs/specs/otlp/#json-p
 
 
 Fail-safe: any error -> drop the bad span, continue; never raise to caller.
+
+WIRING_COMPLETE I2: Uses Rust lock-free counters for exported/failed stats.
 """
 
 import sys
@@ -21,6 +23,24 @@ except ImportError:
     ReadableSpan = None
     SpanExporter = object
     SpanExportResult = None
+
+# WIRING_COMPLETE I2: Lock-free Rust counters for hot-path telemetry
+try:
+    from hledac_rust_extensions import hledac_rust_extensions as _rust_ext
+
+    _RUST_AVAILABLE = hasattr(_rust_ext, "create_counter")
+    if _RUST_AVAILABLE:
+        _STDOUT_EXPORTER_EXported = _rust_ext.create_counter("otel_stdout_exported")
+        _STDOUT_EXPORTER_FAILED = _rust_ext.create_counter("otel_stdout_failed")
+    else:
+        _RUST_AVAILABLE = False
+        _STDOUT_EXPORTER_EXported = None
+        _STDOUT_EXPORTER_FAILED = None
+except ImportError:
+    _RUST_AVAILABLE = False
+    _STDOUT_EXPORTER_EXported = None
+    _STDOUT_EXPORTER_FAILED = None
+
 _MAX_STRING = 1024
 _MAX_LIST = 32
 _MAX_DICT = 32
@@ -119,15 +139,13 @@ class StdoutJSONExporter:
         flush_each_line: Flush after every line. Default True.
     """
 
-    __slots__ = ("_exported", "_failed", "_flush_each_line", "_lock", "_max_attrs", "_stream")
+    __slots__ = ("_flush_each_line", "_lock", "_max_attrs", "_stream")
 
     def __init__(self, stream: TextIO | None = None, max_attrs: int = 32, flush_each_line: bool = True) -> None:
         self._stream: TextIO = stream if stream is not None else sys.stdout
         self._max_attrs = max(1, min(128, int(max_attrs)))
         self._flush_each_line = bool(flush_each_line)
         self._lock = threading.Lock()
-        self._exported = 0
-        self._failed = 0
 
     @property
     def stream(self) -> TextIO:
@@ -136,21 +154,28 @@ class StdoutJSONExporter:
     def export(self, spans: Sequence[Any]) -> Any:
         if not spans:
             return SpanExportResult.SUCCESS if SpanExportResult is not None else 0
+        exported_count = 0
+        failed_count = 0
         with self._lock:
             for sp in spans:
                 try:
                     payload = _span_to_otlp(sp, self._max_attrs)
                     line = _json.encode(payload).decode("utf-8")
                     self._stream.write(line + "\n")
-                    self._exported += 1
+                    exported_count += 1
                 except Exception:
-                    self._failed += 1
-                    continue
+                    failed_count += 1
             if self._flush_each_line:
                 try:
                     self._stream.flush()
                 except Exception:  # noqa: BLE001
                     pass
+        # WIRING_COMPLETE I2: Lock-free counter increments after lock release
+        # Rust MPSC is lock-free on sender side - no GIL contention
+        if _STDOUT_EXPORTER_EXported is not None and exported_count > 0:
+            _STDOUT_EXPORTER_EXported.add(exported_count, 0)
+        if _STDOUT_EXPORTER_FAILED is not None and failed_count > 0:
+            _STDOUT_EXPORTER_FAILED.add(failed_count, 0)
         return SpanExportResult.SUCCESS if SpanExportResult is not None else 0
 
     def shutdown(self) -> None:
@@ -169,5 +194,9 @@ class StdoutJSONExporter:
         return True
 
     def stats(self) -> dict[str, int]:
-        with self._lock:
-            return {"exported": self._exported, "failed": self._failed}
+        # WIRING_COMPLETE I2: Read from Rust counters (lock-free)
+        if _RUST_AVAILABLE and _STDOUT_EXPORTER_EXported is not None and _STDOUT_EXPORTER_FAILED is not None:
+            exported, _ = _STDOUT_EXPORTER_EXported.get()
+            failed, _ = _STDOUT_EXPORTER_FAILED.get()
+            return {"exported": exported, "failed": failed}
+        return {"exported": 0, "failed": 0}

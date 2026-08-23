@@ -380,7 +380,7 @@ async def expand_query(query: str) -> list | None:
                     if asyncio.iscoroutine(pred):
                         pred = await pred
                     return str(pred.answer) if hasattr(pred, "answer") else None
-            except AttributeError, TypeError:
+            except (AttributeError, TypeError):
                 program.lm = lm
                 pred = program(query=query.strip())
                 if asyncio.iscoroutine(pred):
@@ -480,7 +480,7 @@ async def score_findings(findings: list, min_score: float = 4.0) -> list | None:
                     with dspy.context(lm=lm):
                         pred = program(query=findings_json[:500])
                         return str(pred.answer) if hasattr(pred, "answer") else None
-                except AttributeError, TypeError:
+                except (AttributeError, TypeError):
                     program.lm = lm
                     pred = program(query=findings_json[:500])
                     return str(pred.answer) if hasattr(pred, "answer") else None
@@ -500,7 +500,7 @@ async def score_findings(findings: list, min_score: float = 4.0) -> list | None:
                     score = float(parts[1].strip())
                     if 0 <= score <= 10 and idx < len(batch_findings):
                         batch_scored.append((batch_findings[idx], score))
-                except ValueError, IndexError:  # noqa: BLE001
+                except (ValueError, IndexError):  # noqa: BLE001
                     pass
             return batch_scored
         except TimeoutError:

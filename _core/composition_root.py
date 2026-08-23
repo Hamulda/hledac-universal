@@ -62,7 +62,7 @@ def _get_event_loop() -> asyncio.AbstractEventLoop:
             # uvloop.install() was called in __main__.py, but we use the direct constructor
             # to guarantee uvloop is used even if asyncio's policy isn't fully propagated.
             return uvloop.new_event_loop()
-        except ImportError, OSError:
+        except (ImportError, OSError):
             _UVLOOP_AVAILABLE = False
     return asyncio.new_event_loop()
 

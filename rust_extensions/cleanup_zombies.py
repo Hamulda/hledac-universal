@@ -61,7 +61,6 @@ ZOMBIE_MODULES_WITH_DEPS = [
     "fulltext_index",
     "git_forensics",
     "graph_analytics",
-    "lmdb_dht",
     "metal_hashcrack",
     "metal_shared_buf",
     "native_db",

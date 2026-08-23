@@ -203,7 +203,7 @@ class CapabilityProber:
             return self._cache[name]
         try:
             spec = importlib.util.find_spec(name)
-        except ModuleNotFoundError, ValueError:
+        except (ModuleNotFoundError, ValueError):
             spec = None
         exists = spec is not None
         self._cache[name] = exists
@@ -228,7 +228,7 @@ class CapabilityProber:
             async with asyncio.timeout(timeout):
                 module = await asyncio.to_thread(importlib.import_module, name)
             return module
-        except TimeoutError, ImportError:
+        except (TimeoutError, ImportError):
             self._stats["misses"] += 1
             self._stats["missed_modules"].append(name)
             if len(self._stats["missed_modules"]) > _MAX_STATS_MISSED:

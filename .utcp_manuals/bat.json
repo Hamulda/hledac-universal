@@ -1,0 +1,42 @@
+{
+  "name": "bat_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "bat_view",
+      "description": "Cat alternative with syntax highlighting",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "File to view" },
+          "language": { "type": "string", "description": "Force language (e.g. python, javascript)" },
+          "line_range": { "type": "string", "description": "Line range to show (e.g. 1-20)" }
+        },
+        "required": ["path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "bat",
+        "args": ["--style=auto", "--color=auto", "${path}"]
+      }
+    },
+    {
+      "name": "bat_diff",
+      "description": "Show syntax-highlighted diff between files",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "file1": { "type": "string", "description": "First file" },
+          "file2": { "type": "string", "description": "Second file" }
+        },
+        "required": ["file1", "file2"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "diff",
+        "args": ["-u", "${file1}", "${file2}", "|", "bat", "--diff"]
+      }
+    }
+  ]
+}

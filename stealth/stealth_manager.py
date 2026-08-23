@@ -543,7 +543,7 @@ class StealthSession:
             try:
                 delay = float(retry_after)
                 return delay
-            except ValueError, TypeError:  # noqa: BLE001
+            except (ValueError, TypeError):  # noqa: BLE001
                 pass
         base_delay = BASE_RETRY_DELAY * 2**attempt
         jitter = base_delay * RETRY_JITTER_PCT * (2 * _JITTER_RNG.random() - 1)

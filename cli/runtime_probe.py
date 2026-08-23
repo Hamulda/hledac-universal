@@ -43,5 +43,5 @@ def probe_bootstrap_truth() -> tuple[int, int]:
         count = len(get_default_bootstrap_patterns())
         version = 2  # Sprint 8AZ bootstrap pack v2
         return (count, version)
-    except ImportError, AttributeError:
+    except (ImportError, AttributeError):
         return (0, 0)

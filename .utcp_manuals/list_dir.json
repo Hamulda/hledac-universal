@@ -1,0 +1,23 @@
+{
+  "name": "list_dir_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "list_dir",
+      "description": "List directory contents alphabetically",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Directory path" }
+        },
+        "required": ["path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "ls",
+        "args": ["-la", "${path}"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "cargo_tools",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "cargo_check_json",
+      "description": "Spustí cargo check a vrátí diagnostiku v JSON formátu",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "manifest_path": { "type": "string", "description": "Cesta k Cargo.toml" }
+        },
+        "required": ["manifest_path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "cargo",
+        "args": ["check", "--manifest-path", "${manifest_path}", "--message-format", "json"]
+      }
+    }
+  ]
+}

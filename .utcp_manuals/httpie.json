@@ -1,0 +1,77 @@
+{
+  "name": "httpie_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "http_get",
+      "description": "Send GET request using HTTPie (modern curl alternative)",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL to request" },
+          "headers": { "type": "object", "description": "Custom headers as JSON object" },
+          "timeout": { "type": "number", "description": "Timeout in seconds" }
+        },
+        "required": ["url"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "http",
+        "args": ["GET", "${url}"]
+      }
+    },
+    {
+      "name": "http_post",
+      "description": "Send POST request using HTTPie",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL to request" },
+          "data": { "type": "string", "description": "Request body data" },
+          "json": { "type": "object", "description": "JSON body as object" },
+          "headers": { "type": "object", "description": "Custom headers" }
+        },
+        "required": ["url"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "http",
+        "args": ["POST", "${url}", "${data}"]
+      }
+    },
+    {
+      "name": "http_put",
+      "description": "Send PUT request using HTTPie",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL to request" },
+          "data": { "type": "string", "description": "Request body data" }
+        },
+        "required": ["url"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "http",
+        "args": ["PUT", "${url}", "${data}"]
+      }
+    },
+    {
+      "name": "http_delete",
+      "description": "Send DELETE request using HTTPie",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL to request" }
+        },
+        "required": ["url"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "http",
+        "args": ["DELETE", "${url}"]
+      }
+    }
+  ]
+}

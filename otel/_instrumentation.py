@@ -330,7 +330,7 @@ def instrumented(name: str | None = None, **default_attrs: Any) -> Callable[[F],
                 try:
                     with span(n, **attrs):
                         return await fn(*args, **kwargs)
-                except GeneratorExit, RuntimeError:
+                except (GeneratorExit, RuntimeError):
                     # BUG 5 fix: OTel span __exit__ on a generator that received
                     # throw() raises RuntimeError "generator didn't stop after throw()".
                     # Re-raise cleanly so the async context manager protocol completes.
@@ -346,7 +346,7 @@ def instrumented(name: str | None = None, **default_attrs: Any) -> Callable[[F],
                 try:
                     with span(n, **attrs):
                         return fn(*args, **kwargs)
-                except GeneratorExit, RuntimeError:
+                except (GeneratorExit, RuntimeError):
                     # Same fix for sync generators wrapped in span.
                     raise
 

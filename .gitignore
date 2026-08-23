@@ -162,3 +162,8 @@ benchmark_results/
 # Kilo workspace (tooling)
 .kilo/
 .codeclone/
+.supermemory/
+.aislop/
+.tree-ring/
+.utcp_
+.wingman/

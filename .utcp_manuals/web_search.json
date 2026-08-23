@@ -1,0 +1,28 @@
+{
+  "name": "web_search_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web using Exa AI for real-time information",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search query" },
+          "num_results": { "type": "number", "description": "Number of results (default 8)" }
+        },
+        "required": ["query"]
+      },
+      "tool_call_template": {
+        "call_template_type": "http",
+        "url": "https://api.exa.ai/search",
+        "http_method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer ${EXA_API_KEY}"
+        }
+      }
+    }
+  ]
+}

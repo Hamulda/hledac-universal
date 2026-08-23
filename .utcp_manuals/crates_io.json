@@ -1,0 +1,24 @@
+{
+  "name": "crates_io",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "get_crate_info",
+      "description": "Získá metadata a závislosti Rust crate z crates.io",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "crate_name": { "type": "string", "description": "Název crate" }
+        },
+        "required": ["crate_name"]
+      },
+      "tool_call_template": {
+        "call_template_type": "http",
+        "url": "https://crates.io/api/v1/crates/${crate_name}",
+        "http_method": "GET",
+        "headers": { "User-Agent": "utcp-agent (macOS-arm64)" }
+      }
+    }
+  ]
+}

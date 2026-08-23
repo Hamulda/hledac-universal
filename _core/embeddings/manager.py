@@ -280,7 +280,7 @@ def _probe_gpu_fraction() -> float:
             return 0.0
         try:
             active = mx.get_active_memory()
-        except AttributeError, NameError:
+        except (AttributeError, NameError):
             try:
                 active = mx.metal.get_active_memory()
             except Exception:

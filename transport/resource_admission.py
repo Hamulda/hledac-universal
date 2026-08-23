@@ -231,7 +231,7 @@ async def cleanup_child_process(pid: int, ledger: ResourceLedger | None = None, 
         await asyncio.sleep(0.1)
         ledger.unregister_child_process(pid)
         return True
-    except ProcessLookupError, PermissionError:
+    except (ProcessLookupError, PermissionError):
         return False
 
 
@@ -261,7 +261,7 @@ async def cleanup_process_tree(pid: int, ledger: ResourceLedger | None = None, t
         try:
             os.kill(target_pid, signal.SIGTERM)
             terminated += 1
-        except ProcessLookupError, PermissionError:
+        except (ProcessLookupError, PermissionError):
             continue
     deadline = time_module.monotonic() + timeout_s / 2
     remaining = list(pids_to_kill)
@@ -282,7 +282,7 @@ async def cleanup_process_tree(pid: int, ledger: ResourceLedger | None = None, t
             try:
                 os.kill(target_pid, signal.SIGKILL)
                 terminated += 1
-            except ProcessLookupError, PermissionError:
+            except (ProcessLookupError, PermissionError):
                 continue
     for target_pid in pids_to_kill:
         ledger.unregister_child_process(target_pid)

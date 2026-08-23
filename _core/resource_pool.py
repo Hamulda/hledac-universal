@@ -204,7 +204,7 @@ class _DuckDBPool:
                         self._stats.pool_hits += 1
                         del pool[idx]
                         return (conn, db_path)
-                except IndexError, TypeError:  # noqa: BLE001
+                except (IndexError, TypeError):  # noqa: BLE001
                     pass
         self._stats.pool_misses += 1
         with self._lock:

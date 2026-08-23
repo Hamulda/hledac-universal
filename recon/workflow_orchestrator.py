@@ -650,7 +650,7 @@ class WorkflowOrchestrator:
                 try:
                     ts = datetime.fromisoformat(result["timestamp"])
                     timestamps.append((module, ts))
-                except ValueError, TypeError:  # noqa: BLE001
+                except (ValueError, TypeError):  # noqa: BLE001
                     pass
         if len(timestamps) > 1:
             now = datetime.now(UTC)

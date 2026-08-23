@@ -39,7 +39,7 @@ def resolve_deep_research_budget_s(extreme_mode: bool) -> float:
         if extreme_mode:
             return _BUDGET_BY_MODE["extreme"]
         return _BUDGET_BY_MODE["deep"]
-    except KeyError, TypeError:
+    except (KeyError, TypeError):
         # Fail-safe: any unexpected input returns DEEP-equivalent (60 s)
         return 60.0
 

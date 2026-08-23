@@ -950,7 +950,7 @@ def _configure_patterns_impl(registry: tuple[tuple[str, str], ...]) -> None:
     if old is not None:
         try:
             old.close()
-        except AttributeError, TypeError:  # noqa: BLE001
+        except (AttributeError, TypeError):  # noqa: BLE001
             pass  # fail-safe: close not available or already None — non-fatal
 
     # Build Rust ACO eagerly if available and patterns don't overlap
@@ -1261,7 +1261,7 @@ def reset_pattern_matcher() -> None:
     if old is not None:
         try:
             old.close()
-        except AttributeError, TypeError:  # noqa: BLE001
+        except (AttributeError, TypeError):  # noqa: BLE001
             pass  # fail-safe: close not available or already None
     _matcher_state._rust_aco = None
     _matcher_state._pattern_version = 0

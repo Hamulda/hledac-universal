@@ -812,7 +812,7 @@ class PivotPlanner:
             return False
         try:
             return all(0 <= int(p) <= 255 for p in parts)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return False
 
     def _pivot_type_for_ioc(self, ioc_type: str) -> str:
@@ -1056,7 +1056,7 @@ def _looks_like_ip(s: str) -> bool:
         return False
     try:
         return all(0 <= int(p) <= 255 for p in parts)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return False
 
 

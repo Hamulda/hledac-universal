@@ -525,7 +525,7 @@ class DataLeakHunter:
             ):
                 with _:
                     await _poll_once()
-        except _RateLimitedError, _PollError:
+        except (_RateLimitedError, _PollError):
             # Exhausted retries
             pass
         return alerts
@@ -750,7 +750,7 @@ class PasteMonitorClient:
 
                 raw_bytes = await asyncio.to_thread(zst_path.read_bytes)
                 return orjson.loads(_zstd.decompress(raw_bytes))
-            except ImportError, Exception:  # noqa: BLE001
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             raw_bytes = await asyncio.to_thread(json_path.read_bytes)

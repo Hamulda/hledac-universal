@@ -152,8 +152,9 @@ mod lsh_index;
 
 mod memory;
 
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
+// B6: Native DB - MongoDB/Redis/ES wire-protocol extraction
+// python_callers: recon/exposed_service_hunter.py, network/native_extraction.py,
+//                 recon/native_db_client.py (Tier 0 MongoDB hello detector)
 mod native_db;
 
 // B5: Pipeline composition - wired via pipeline_compose_wiring.py
@@ -385,9 +386,6 @@ mod binary_matryoshka;
 #[cfg(feature = "whisper")]
 mod whisper;
 
-#[cfg(feature = "lmdb_dht")]
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
 mod lmdb_dht;
 
 #[cfg(target_os = "macos")]
@@ -624,7 +622,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     sendfile::register_functions(&m)?;
     #[cfg(feature = "fulltext")]
     graph_analytics::register_functions(&m)?;
-    #[cfg(feature = "lmdb_dht")]
     lmdb_dht::register_functions(&m)?;
     #[cfg(feature = "mlx_bridge")]
     binary_matryoshka::register_functions(&m)?;

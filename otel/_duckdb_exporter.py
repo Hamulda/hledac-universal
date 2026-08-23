@@ -24,13 +24,36 @@ DuckDB analytical queries:
 """
 
 import hashlib
-import threading
+import threading  # DuckDBSpanExporter background flush thread
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry.sdk.trace import Span
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import Status, StatusCode
+
+# WIRING_COMPLETE I2: Lock-free Rust counters for hot-path telemetry
+try:
+    from hledac_rust_extensions import hledac_rust_extensions as _rust_ext
+
+    _RUST_AVAILABLE = hasattr(_rust_ext, "create_counter")
+    if _RUST_AVAILABLE:
+        _SAMPLER_TOTAL = _rust_ext.create_counter("otel_sampler_total")
+        _SAMPLER_FILTERED = _rust_ext.create_counter("otel_sampler_filtered")
+        _SAMPLER_EXPORTED = _rust_ext.create_counter("otel_sampler_exported")
+        _DUCKDB_EXPORTER_BATCH_SIZE = _rust_ext.create_histogram("otel_duckdb_batch_size")
+    else:
+        _RUST_AVAILABLE = False
+        _SAMPLER_TOTAL = None
+        _SAMPLER_FILTERED = None
+        _SAMPLER_EXPORTED = None
+        _DUCKDB_EXPORTER_BATCH_SIZE = None
+except ImportError:
+    _RUST_AVAILABLE = False
+    _SAMPLER_TOTAL = None
+    _SAMPLER_FILTERED = None
+    _SAMPLER_EXPORTED = None
+    _DUCKDB_EXPORTER_BATCH_SIZE = None
 
 # orjson fallback — 5-10× faster than stdlib json, M1 optimized
 try:
@@ -143,10 +166,6 @@ class SamplingSpanProcessor:
     __slots__ = (
         "_next",
         "_sample_rate",
-        "_total_count",
-        "_filtered_count",
-        "_exported_count",
-        "_lock",
         "_skip_prefixes",
         "_slow_span_threshold_ms",
     )
@@ -161,10 +180,6 @@ class SamplingSpanProcessor:
     ) -> None:
         self._next = next_processor
         self._sample_rate = sample_rate
-        self._total_count = 0
-        self._filtered_count = 0
-        self._exported_count = 0
-        self._lock = threading.Lock()
         self._slow_span_threshold_ms = slow_span_threshold_ms
         if skip_prefixes is not None:
             self._skip_prefixes = skip_prefixes
@@ -183,21 +198,26 @@ class SamplingSpanProcessor:
 
     def on_end(self, span: Span) -> None:
         """Called by OTel SDK when a span ends. Apply sampling rules."""
-        self._total_count += 1
+        # WIRING_COMPLETE I2: Lock-free counter increment (no lock needed)
+        if _SAMPLER_TOTAL is not None:
+            _SAMPLER_TOTAL.inc()
         try:
             if self._should_export(span):
                 self._next.on_end(span)
-                with self._lock:
-                    self._exported_count += 1
+                # WIRING_COMPLETE I2: Lock-free counter increment (no lock needed)
+                if _SAMPLER_EXPORTED is not None:
+                    _SAMPLER_EXPORTED.inc()
             else:
-                with self._lock:
-                    self._filtered_count += 1
+                # WIRING_COMPLETE I2: Lock-free counter increment (no lock needed)
+                if _SAMPLER_FILTERED is not None:
+                    _SAMPLER_FILTERED.inc()
         except Exception:
             # Fail-soft: pass through on error
             try:
                 self._next.on_end(span)
-                with self._lock:
-                    self._exported_count += 1
+                # WIRING_COMPLETE I2: Lock-free counter increment (no lock needed)
+                if _SAMPLER_EXPORTED is not None:
+                    _SAMPLER_EXPORTED.inc()
             except Exception:  # noqa: BLE001
                 pass
 
@@ -245,13 +265,17 @@ class SamplingSpanProcessor:
 
     @property
     def stats(self) -> dict[str, int]:
-        """Return sampling statistics."""
-        with self._lock:
+        """Return sampling statistics (WIRING_COMPLETE I2: reads from Rust counters)."""
+        if _RUST_AVAILABLE and _SAMPLER_TOTAL is not None:
+            total, _ = _SAMPLER_TOTAL.get()
+            filtered, _ = _SAMPLER_FILTERED.get() if _SAMPLER_FILTERED else (0, 0)
+            exported, _ = _SAMPLER_EXPORTED.get() if _SAMPLER_EXPORTED else (0, 0)
             return {
-                "total": self._total_count,
-                "filtered": self._filtered_count,
-                "exported": self._exported_count,
+                "total": total,
+                "filtered": filtered,
+                "exported": exported,
             }
+        return {"total": 0, "filtered": 0, "exported": 0}
 
 
 # --------------------------------------------------------------------------- #
@@ -375,7 +399,7 @@ class DuckDBSpanExporter(SpanExporter):
         duration_ms = (end_ns - start_ns) / 1_000_000.0  # type: ignore[operator]
 
         attributes_json = _json_dumps(dict(span.attributes) if span.attributes else {})
-        resource_json = json.dumps(
+        resource_json = _json_dumps(
             {k: str(v) for k, v in span.resource.attributes.items()}
             if span.resource and span.resource.attributes
             else {}

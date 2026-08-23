@@ -1753,7 +1753,7 @@ class IdentityStitchingEngine:
                     emb_a_list.append(profile_a.face_embeddings[idx_a])
                     emb_b_list.append(profile_b.face_embeddings[idx_b])
                     valid_face_ids.append(face_id)
-                except ValueError, IndexError:
+                except (ValueError, IndexError):
                     continue
 
             if emb_a_list and emb_b_list:
@@ -1915,7 +1915,7 @@ class IdentityStitchingEngine:
                         signals["voice_match"] = float(similarity)
                         evidence.append(f"Voice match (shared ID {voice_id[:8]}...): similarity={similarity:.2f}")
                         return signals, evidence
-                except ValueError, IndexError:
+                except (ValueError, IndexError):
                     continue
 
         # Method 2: LSH-based lookup for independent profiles

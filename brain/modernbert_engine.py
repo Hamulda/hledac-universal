@@ -28,17 +28,11 @@ import sys
 import numpy as np
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.optional_imports import get_mlx_core
 
 logger = logging.getLogger(__name__)
 MODERNBERT_AVAILABLE = False
 _mlx_embeddings_ok = False
-try:
-    import mlx.core as mx
-
-    _ = mx.metal.is_available()
-    _mlx_embeddings_ok = True
-except Exception:
-    _mlx_embeddings_ok = False
 
 
 class ModernBertConfig(Struct):

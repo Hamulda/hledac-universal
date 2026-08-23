@@ -80,15 +80,10 @@ logger = logging.getLogger(__name__)
 
 
 def _is_mlx_available() -> bool:
-    try:
-        import mlx.core
-
-        return True
-    except ImportError:
-        return False
+    return get_mlx_core() is not None
 
 
-MLX_AVAILABLE = _is_mlx_available()
+MLX_AVAILABLE = False
 
 
 class InferenceEvidence(Struct, frozen=False):
@@ -572,7 +567,7 @@ class InferenceEngine:
                 net_b = ".".join(ip_b.split(".")[:3])
                 if net_a == net_b:
                     return True
-            except AttributeError, IndexError:  # noqa: BLE001
+            except (AttributeError, IndexError):  # noqa: BLE001
                 pass
         loc_a = a.get("location") or a.get("metadata", {}).get("location")
         loc_b = b.get("location") or b.get("metadata", {}).get("location")

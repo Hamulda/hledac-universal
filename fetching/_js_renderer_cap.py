@@ -23,7 +23,7 @@ def check_chrome_binary_exists() -> bool:
 class JSRendererCapability:
     """Thread-safe JS renderer capability tracker.
 
-    Tracks availability of camoufox, nodriver, and playwright.
+    Tracks availability of nodriver and playwright.
     Uses threading.Lock for thread-safe access.
     Cached after first check — use reset() to force re-check.
 
@@ -36,7 +36,6 @@ class JSRendererCapability:
 
     def __init__(self) -> None:
         self._capability: dict[str, str | None] = {
-            "camoufox": None,
             "nodriver": None,
             "playwright": None,
         }
@@ -50,7 +49,7 @@ class JSRendererCapability:
     def reset(self) -> None:
         """Reset all capabilities to unknown (force re-check)."""
         with self._lock:
-            self._capability = {"camoufox": None, "nodriver": None, "playwright": None}
+            self._capability = {"nodriver": None, "playwright": None}
 
     def check(self) -> dict[str, str | None]:
         """Run capability checks and return cached state.
@@ -58,19 +57,9 @@ class JSRendererCapability:
         Checks are only run once per renderer (until reset()).
         """
         with self._lock:
-            self._check_camoufox_unlocked()
             self._check_nodriver_unlocked()
             self._check_playwright_unlocked()
             return dict(self._capability)
-
-    def _check_camoufox_unlocked(self) -> None:
-        """Check camoufox availability (must hold lock)."""
-        if self._capability["camoufox"] is not None:
-            return
-        try:
-            self._capability["camoufox"] = None  # available
-        except ImportError:
-            self._capability["camoufox"] = "camoufox_unavailable"
 
     def _check_nodriver_unlocked(self) -> None:
         """Check nodriver availability (must hold lock)."""

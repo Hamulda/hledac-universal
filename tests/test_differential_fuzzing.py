@@ -490,7 +490,12 @@ class TestDifferentialSimdDomain:
     )
     @settings(max_examples=200, verbosity=Verbosity.verbose, deadline=None)
     def test_cosine_similarity(self, a: list, b: list) -> None:
-        """cosine_similarity musí vracet bit-identické výsledky."""
+        """cosine_similarity musí vracet výsledky v toleranci ±1e-6.
+
+        Poznámka: Python a Rust implementace používají mírně odlišné
+        numerické výpočty (math.sqrt vs ** 0.5), proto je tolerance 1e-6,
+        ne bit-identická shoda.
+        """
         # Zajistit stejnou délku
         min_len = min(len(a), len(b))
         a, b = a[:min_len], b[:min_len]
@@ -520,10 +525,13 @@ class TestDifferentialSimdDomain:
     )
     @settings(max_examples=100, verbosity=Verbosity.verbose, deadline=None)
     def test_batch_cosine_similarity(self, vectors: list, query: list) -> None:
-        """batch_cosine_similarity musí vracet stejné výsledky.
+        """batch_cosine_similarity musí vracet výsledky v toleranci ±1e-6.
 
         F5.3: Zero-vector inputs ([0.0]) dávají různé výsledky mezi Python a Rust.
         Filtrujeme zero-vector query, zero-length vectors, a krátké vectors ( délka < 2).
+
+        Poznámka: Python implementace v misc.py používá math.sqrt, zatímco
+        Rust používá SIMD instrukce. Tolerance 1e-6 pokrývá numerické rozdíly.
         """
         # Zajistit konzistentní rozměry — všechny vectors stejně dlouhé jako query
         query_len = len(query)

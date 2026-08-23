@@ -265,7 +265,7 @@ class TransportSupervisor:
                     healthy = await transport.is_healthy()
             except TimeoutError:
                 healthy = False
-            except KeyError, RuntimeError:  # transport not found or health check failed
+            except (KeyError, RuntimeError):  # transport not found or health check failed
                 healthy = False
             self._last_health[name] = healthy
             if not healthy:

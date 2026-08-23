@@ -405,7 +405,7 @@ class _DocumentMetadataExtractor:
                     if key and "revision" in key.lower():
                         try:
                             return int(value)
-                        except ValueError, TypeError:  # noqa: BLE001
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
             return 0
         except Exception:
@@ -1397,6 +1397,6 @@ def _exif_to_float(val):
     if isinstance(val, (tuple, list)):
         try:
             return val[0] / val[1]
-        except ZeroDivisionError, TypeError:
+        except (ZeroDivisionError, TypeError):
             return 0.0
     return float(val) if val else 0.0

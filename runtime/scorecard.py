@@ -193,7 +193,7 @@ class ScorecardBuilder:
                     if not source_yield_val:
                         accepted_val = dedup.get("accepted_count", 0)
                         ioc_val = dedup.get("ioc_count", 0)
-                except AttributeError, RuntimeError:  # noqa: BLE001
+                except (AttributeError, RuntimeError):  # noqa: BLE001
                     pass
             return accepted_val, ioc_val, source_yield_val
 
@@ -214,7 +214,7 @@ class ScorecardBuilder:
             if store is not None and hasattr(store, "_arrow_metrics"):
                 try:
                     arrow_val = store._arrow_metrics  # type: ignore[union-attr]
-                except AttributeError, TypeError:  # noqa: BLE001
+                except (AttributeError, TypeError):  # noqa: BLE001
                     pass
             elif store is not None and hasattr(store, "get_arrow_metrics"):
                 try:
@@ -222,7 +222,7 @@ class ScorecardBuilder:
                     from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
 
                     arrow_val = get_arrow_metrics()
-                except ImportError, AttributeError:  # noqa: BLE001
+                except (ImportError, AttributeError):  # noqa: BLE001
                     pass
             return arrow_val
 
@@ -238,7 +238,7 @@ class ScorecardBuilder:
                 from hledac.universal.transport.circuit_breaker import get_all_breaker_states
 
                 cb_states = get_all_breaker_states()
-            except ImportError, AttributeError:  # noqa: BLE001
+            except (ImportError, AttributeError):  # noqa: BLE001
                 pass
             return cb_states
 
@@ -332,7 +332,7 @@ class ScorecardBuilder:
                 packet = None
             if packet is not None:
                 self._scorecard_data.investigation_packet = packet
-        except ImportError, AttributeError:  # noqa: BLE001
+        except (ImportError, AttributeError):  # noqa: BLE001
             pass
 
     async def persist(
@@ -371,7 +371,7 @@ class ScorecardBuilder:
             async def safe_upsert_scorecard() -> None:
                 try:
                     await store.upsert_scorecard(self._scorecard_data_to_dict(data))
-                except RuntimeError, OSError:  # noqa: BLE001
+                except (RuntimeError, OSError):  # noqa: BLE001
                     pass
 
             duckdb_write_tasks.append(
@@ -409,7 +409,7 @@ class ScorecardBuilder:
                             "ts": _t.time(),
                         }
                     )
-                except RuntimeError, OSError:  # noqa: BLE001
+                except (RuntimeError, OSError):  # noqa: BLE001
                     pass
 
             duckdb_write_tasks.append(

@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 
+from hledac.universal._core.env_config import ENV
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 
 logger = logging.getLogger(__name__)
@@ -64,13 +65,13 @@ def _lz4_compress_python(lines: list[bytes]) -> bytes:
         return zlib.compress(combined, 6)
 
 
-_JSONL_LZ4_ENABLED = os.environ.get("HLEDAC_JSONL_LZ4", "1") == "1"
-_JSONL_LZ4_BATCH_SIZE = int(os.environ.get("HLEDAC_JSONL_LZ4_BATCH", "256"))
-_JSONL_LZ4_QUEUE_MAX = int(os.environ.get("HLEDAC_JSONL_LZ4_QUEUE", "1000"))
-_JSONL_LZ4_FLUSH_BYTES = int(os.environ.get("HLEDAC_JSONL_LZ4_FLUSH", str(32 * 1024)))
-_JSONL_LZ4_COMPRESS_THRESHOLD = int(os.environ.get("HLEDAC_JSONL_LZ4_MIN_COMPRESS", "512"))
+_JSONL_LZ4_ENABLED = ENV.get_bool("HLEDAC_JSONL_LZ4", default=True)
+_JSONL_LZ4_BATCH_SIZE = ENV.get_int("HLEDAC_JSONL_LZ4_BATCH", default=256)
+_JSONL_LZ4_QUEUE_MAX = ENV.get_int("HLEDAC_JSONL_LZ4_QUEUE", default=1000)
+_JSONL_LZ4_FLUSH_BYTES = ENV.get_int("HLEDAC_JSONL_LZ4_FLUSH", default=32 * 1024)
+_JSONL_LZ4_COMPRESS_THRESHOLD = ENV.get_int("HLEDAC_JSONL_LZ4_MIN_COMPRESS", default=512)
 
-_JSONL_LZ4_WRITE_TIMEOUT_S = float(os.environ.get("HLEDAC_JSONL_LZ4_WRITE_TIMEOUT", "5.0"))
+_JSONL_LZ4_WRITE_TIMEOUT_S = ENV.get_float("HLEDAC_JSONL_LZ4_WRITE_TIMEOUT", default=5.0)
 
 
 class LZ4JSONLWriter:

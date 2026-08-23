@@ -89,7 +89,7 @@ def _setup_signal_handlers() -> None:
     signal.signal(signal.SIGINT, _sigterm_handler)
     try:
         signal.signal(signal.SIGHUP, _sigterm_handler)
-    except OSError, AttributeError:  # noqa: BLE001
+    except (OSError, AttributeError):  # noqa: BLE001
         pass  # SIGHUP not available on Windows
     _signal_handler_registered = True
 

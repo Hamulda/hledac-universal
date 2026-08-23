@@ -1209,7 +1209,7 @@ def _extract_hit_metadata(hit) -> dict:
     if hit_score is None and hasattr(hit, "__getitem__"):
         try:
             hit_score = float(hit[4]) if len(hit) > 4 else None
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             hit_score = None
     hit_reason = getattr(hit, "reason", None)
     hit_title = getattr(hit, "title", None) or (

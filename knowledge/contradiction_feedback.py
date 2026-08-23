@@ -611,7 +611,7 @@ class ContradictionFeedbackBridge:
 
             try:
                 orchestrator = GraphRAGOrchestrator(knowledge_layer=None)
-            except TypeError, Exception:
+            except (TypeError, Exception):
                 return None
             facts = [
                 {

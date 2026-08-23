@@ -1440,7 +1440,7 @@ async def scan_parallel[T](
                     try:
                         msg = log_success.format(**dict(zip(["host", "port"], args[:2], strict=False)))
                         logger.info(msg)
-                    except KeyError, IndexError:
+                    except (KeyError, IndexError):
                         logger.info(f"Found: {args}")
                 return result
             except Exception as e:

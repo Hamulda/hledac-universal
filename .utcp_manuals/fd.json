@@ -1,0 +1,42 @@
+{
+  "name": "fd_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "fd_find",
+      "description": "Fast alternative to find - find files by pattern",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string", "description": "Search pattern (regex or glob)" },
+          "path": { "type": "string", "description": "Directory to search (default: current)" },
+          "extension": { "type": "string", "description": "Filter by file extension (e.g. .py, .js)" },
+          "type": { "type": "string", "description": "Type: f (file), d (directory), l (symlink)" }
+        },
+        "required": ["pattern"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "fd",
+        "args": ["${pattern}", "${path:.}", "--type", "${type:-f}"]
+      }
+    },
+    {
+      "name": "fd_hidden",
+      "description": "Find hidden files and directories",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Directory to search (default: current)" },
+          "include_hidden": { "type": "boolean", "description": "Include hidden files (default: true)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "fd",
+        "args": [".", "${path:.}", "-H", "-a"]
+      }
+    }
+  ]
+}

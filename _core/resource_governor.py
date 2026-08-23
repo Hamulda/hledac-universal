@@ -777,7 +777,7 @@ def get_current_degradation_level() -> QoSLevel:
     """
     try:
         return QoSLevel(get_qos_level())
-    except ValueError, AttributeError:
+    except (ValueError, AttributeError):
         # Fail-open: if _last_qos_profile.level is somehow corrupted or the
         # module hasn't been fully initialized, default to FULL capabilities.
         return QoSLevel.FULL
@@ -3199,7 +3199,7 @@ class ResourceGovernor:
                 )
                 return False, True
             return True, False
-        except ImportError, AttributeError:
+        except (ImportError, AttributeError):
             return True, False
 
     def _check_ram(self, cost_estimate: dict[str, Any], priority: Priority) -> bool:
@@ -4382,7 +4382,7 @@ class QoSSubscriptionRegistry:
 
                 qos_level_obj = QoSLevel(self._last_qos_level)
                 qos_severity = qos_level_obj.severity
-            except ValueError, AttributeError:
+    except (ValueError, AttributeError):
                 qos_severity = 0  # FULL level
 
             # Restrictive levels require active compliance

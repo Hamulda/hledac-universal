@@ -846,5 +846,5 @@ def _iso_ts(val: Any) -> str:
         from datetime import datetime
 
         return datetime.fromtimestamp(float(val), tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return str(val)

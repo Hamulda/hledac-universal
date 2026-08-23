@@ -31,7 +31,7 @@ _HARD_GIB = float(os.environ.get("HLEDAC_MEM_HARD_GIB", str(UmaBudget.MISSION_PE
 _BROWSER_THRESHOLD_GIB = float(os.environ.get("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", "1.5"))
 _CURL_CFFI_POOL_SIZE = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 
-BrowserTier = Literal["camoufox", "nodriver", "deferred", "skip_js"]
+BrowserTier = Literal["nodriver", "deferred", "skip_js"]
 
 
 class BrowserDecision(Struct, frozen=True):
@@ -109,8 +109,8 @@ def decide(
 
     Logic:
       RSS >= hard  → deferred always
-      RSS >= soft  → camoufox only if priority <= 3 AND confidence >= 0.75
-      RSS < soft   → camoufox (primary), nodriver as caller-level fallback
+      RSS >= soft  → nodriver only if priority <= 3 AND confidence >= 0.75
+      RSS < soft   → nodriver (primary)
     """
     rss = _rss_gib()
 
@@ -132,7 +132,7 @@ def decide(
                 js_confidence,
             )
             return BrowserDecision(
-                tier="camoufox",
+                tier="nodriver",
                 allowed=True,
                 rss_gib=rss,
                 js_confidence=js_confidence,
@@ -147,7 +147,7 @@ def decide(
         )
 
     return BrowserDecision(
-        tier="camoufox",
+        tier="nodriver",
         allowed=True,
         rss_gib=rss,
         js_confidence=js_confidence,

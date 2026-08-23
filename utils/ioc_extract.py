@@ -137,6 +137,10 @@ def _deobfuscate_texts(texts: list[str]) -> list[str]:
         return texts
 
 
+# Re-export DedupBloom singleton from canonical wiring module.
+# Production code uses _get_dedup_bloom() in knowledge/ioc_processor.py instead.
+from rust_extensions.wiring.dedup_bloom_wiring import get_dedup_bloom as get_dedup_bloom_singleton
+
 _tier1_func: Any = None
 _tier2_func: Any = None
 _resolved: bool = False
@@ -309,6 +313,7 @@ __all__ = [
     "extract_iocs_batch",
     "extract_iocs_single",
     "extract_iocs_from_findings",
+    "get_dedup_bloom_singleton",
     "MAX_BATCH_SIZE",
     "TEXT_MAX_BYTES",
 ]

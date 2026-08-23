@@ -603,7 +603,7 @@ async def lookup_info_hash_metadata(info_hash: str, timeout_s: float = 15.0) -> 
                 "source": "dht",
             }
         return {}
-    except TimeoutError, Exception:
+    except (TimeoutError, Exception):
         return {}
     finally:
         await node.stop()

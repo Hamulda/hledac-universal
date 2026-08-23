@@ -30,7 +30,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from _core.lock_registry import LockCategory, register_lock
+from _core.lock_registry import LockCategory, auto_register
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ _io_pool: concurrent.futures.ThreadPoolExecutor | None = None
 _cpu_pool: concurrent.futures.ThreadPoolExecutor | None = None
 
 
-@register_lock(LockCategory.CACHE)
+@auto_register(LockCategory.CACHE)
 def _pool_lock() -> threading.Lock:
     """Module-level lock for thread pool singletons."""
     return threading.Lock()
@@ -305,7 +305,7 @@ def get_ane_executor() -> PersistentActorExecutor:
     """Return the ANE (Apple Neural Engine) dedicated actor executor."""
     global _ane_pool
     if _ane_pool is None:
-        with _pool_lock:
+        with _pool_lock():
             if _ane_pool is None:
                 _ane_pool = PersistentActorExecutor(name="ane", initializer=lambda: _set_thread_qos(25))
     return _ane_pool
@@ -315,7 +315,7 @@ def get_db_executor() -> PersistentActorExecutor:
     """Return the database (DuckDB/Kuzu) dedicated actor executor."""
     global _db_pool
     if _db_pool is None:
-        with _pool_lock:
+        with _pool_lock():
             if _db_pool is None:
                 _db_pool = PersistentActorExecutor(name="db", initializer=lambda: _set_thread_qos(17))
     return _db_pool

@@ -36,7 +36,7 @@ try:
     import asyncio.stream as _stream
 
     HAS_ASYNCIO_STREAM = True
-except ImportError, AttributeError:
+except (ImportError, AttributeError):
     HAS_ASYNCIO_STREAM = False
 from contextlib import aclosing as _aclose
 

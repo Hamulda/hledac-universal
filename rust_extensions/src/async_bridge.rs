@@ -200,8 +200,8 @@ pub fn async_fetch_py(
 ///
 /// Allows direct `await` instead of `asyncio.to_thread()` for Tor connections.
 ///
-/// This wraps the sync Arti fetch in a blocking thread, returning
-/// a Python awaitable that can be used with `await` directly.
+/// This uses `into_future()` to properly await Python async methods without
+/// blocking the tokio runtime thread pool.
 ///
 /// # Example
 /// ```python
@@ -211,13 +211,38 @@ pub fn async_fetch_py(
 ///     # Create and bootstrap ArtiNode first
 ///     node = rust.arti_bridge.ArtiNode()
 ///     await asyncio.to_thread(node.start)  # Sync start
-///     
-///     # Now use async fetch
+///
+///     # Now use async fetch (if fetch_onion is async on the Python object)
 ///     resp = await rust.arti_bridge.async_fetch_onion(node, "http://example.onion/")
 ///     print(f"Status: {resp.status}")
 ///
 /// asyncio.run(main())
 /// ```
+///
+/// # P0-4 Fix Notes
+///
+/// **OLD (broken) pattern — GIL safety violation:**
+/// ```rust
+/// tokio::task::spawn_blocking(move || {
+///     unsafe {
+///         Python::assume_attached(|py| {  // ❌ UNSAFE — GIL not held
+///             node.call_method1(py, "fetch_onion", (&url_clone,))
+///         })
+///     }
+/// })
+/// ```
+///
+/// **NEW (correct) pattern — uses into_future for async Python methods:**
+/// ```rust
+/// future_into_py(py, async move {
+///     let py_future = node.call_method0("fetch_onion")?;
+///     let result = into_future::<'py>(py_future.into_any()).await?;
+///     Ok(result)
+/// })
+/// ```
+///
+/// If the Python object's `fetch_onion` is a sync method (not async),
+/// use `asyncio.to_thread()` from Python instead of this function.
 #[cfg(feature = "embedded_tor")]
 #[pyfunction]
 pub fn async_fetch_onion_py<'py>(
@@ -230,42 +255,35 @@ pub fn async_fetch_onion_py<'py>(
     timeout_s: Option<f64>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let method = method.unwrap_or_else(|| "GET".to_string());
-    let url_clone = url);
-    let body_clone = body);
-    let headers_clone = headers);
-    let timeout_s_val = timeout_s.unwrap_or(30.0);
+    let url_clone = url;
+    let body_clone = body;
+    let headers_clone = headers;
+    let _timeout_s_val = timeout_s.unwrap_or(30.0);
 
+    // P0-4 FIX: Use into_future() for async Python method calls instead of
+    // spawn_blocking with unsafe Python::assume_attached().
+    //
+    // The old pattern was fundamentally broken:
+    // 1. spawn_blocking + Python::assume_attached() = GIL safety violation (UB)
+    // 2. If fetch_onion is async, spawn_blocking would cause deadlock
+    //
+    // The new pattern properly awaits Python coroutines using into_future(),
+    // which handles GIL management correctly via pyo3-async-runtimes.
+    //
+    // Note: If fetch_onion is a sync method, Python callers should use
+    // `asyncio.to_thread(node.fetch_onion, ...)` instead of this function.
     future_into_py(py, async move {
-        // Run the blocking Arti fetch in tokio blocking thread
-        // We need to pass Python object reference safely
-        let result = tokio::task::spawn_blocking(move || {
-            // SAFETY: We're on a tokio blocking thread and hold no Python GIL state
-            // during the spawn. The Python object reference is safely transferred.
-            unsafe {
-                Python::assume_attached(|py| {
-                    let result = node.call_method1(
-                        py,
-                        "fetch_onion",
-                        (&url_clone,),
-                    );
-                    result
-                })
-            }
-        })
-        .await
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "spawn_blocking: {}",
-                e
-            ))
-        })?
-        .map_err(|e| {
-            // Convert Python exception to PyErr
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "fetch_onion: {}",
-                e
-            ))
-        });
+        // Prepare positional args for fetch_onion(url, method, body, headers, timeout)
+        let args = (url_clone, method, body_clone, headers_clone, _timeout_s_val);
+
+        // Get the Python coroutine/future for fetch_onion
+        let py_future = node.call_method1("fetch_onion", args)?;
+
+        // Properly await the Python async method using into_future.
+        // This handles GIL safety correctly and avoids deadlock.
+        let result = into_future::<'py>(py_future.into_any()).await?;
+
+        Ok(result)
     })
 }
 

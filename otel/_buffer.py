@@ -34,42 +34,23 @@ K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)
 
 # Lock-free Rust telemetry for zero-mutex hot-path monitoring
+# Uses hledac_rust_extensions.create_counter/create_histogram (WIRING_COMPLETE)
 try:
-    from rust_extensions.integrations import TelemetryIntegration
+    from hledac_rust_extensions import hledac_rust_extensions as _rust_ext
 
-    _TELEMETRY: TelemetryIntegration | None = TelemetryIntegration()
-    _RING_PUT_COUNTER = _TELEMETRY.create_counter("otel_ring_put") if _TELEMETRY.available else None
-    # A4 FIX: Use Gauge for ring_size (raw count, not latency)
-    # Gauge is correct for "current buffer occupancy" - Gauge.set() overwrites, doesn't accumulate
-    _RING_SIZE_GAUGE = _TELEMETRY.create_gauge("otel_ring_size") if _TELEMETRY.available else None
-    # Histogram is still available for ring_size latency (time-based metrics)
-    _RING_SIZE_HISTOGRAM = _TELEMETRY.create_histogram("otel_ring_size_us") if _TELEMETRY.available else None
+    _RUST_AVAILABLE = hasattr(_rust_ext, "create_counter") and hasattr(_rust_ext, "create_histogram")
+    if _RUST_AVAILABLE:
+        _RING_PUT_COUNTER = _rust_ext.create_counter("otel_ring_put")
+        _RING_SIZE_HISTOGRAM = _rust_ext.create_histogram("otel_ring_size")
+    else:
+        _RUST_AVAILABLE = False
+        _RING_PUT_COUNTER = None
+        _RING_SIZE_HISTOGRAM = None
 except ImportError:
-    _TELEMETRY = None
+    _RUST_AVAILABLE = False
     _RING_PUT_COUNTER = None
-    _RING_SIZE_GAUGE = None
     _RING_SIZE_HISTOGRAM = None
 
-
-def _telemetry_inc_put() -> None:
-    """Lock-free counter increment via Rust MPSC.
-
-    A4: Sends to MPSC channel - lock-free on sender side.
-    """
-    if _RING_PUT_COUNTER is not None:
-        _RING_PUT_COUNTER.inc()
-
-
-def _telemetry_record_size(size: int) -> None:
-    """Lock-free gauge set via Rust MPSC.
-
-    A4 FIX: Ring size is a raw count (0 to capacity), not time.
-    Gauge is correct here - it tracks "current value" not "distribution".
-
-    For percentile distribution of ring sizes, use _RING_SIZE_HISTOGRAM separately.
-    """
-    if _RING_SIZE_GAUGE is not None:
-        _RING_SIZE_GAUGE.set(float(size))
 
 
 class BoundedRing[K, V]:
@@ -97,6 +78,8 @@ class BoundedRing[K, V]:
         "_hits",
         "_misses",
         "_evictions",
+        "_drop_counter",  # WIRING_COMPLETE I2: per-instance lock-free drop counter
+        "_size_histogram",  # WIRING_COMPLETE I2: per-instance lock-free size histogram
     )
 
     def __init__(self, capacity: int = 4096) -> None:
@@ -110,15 +93,24 @@ class BoundedRing[K, V]:
         self._hits = 0
         self._misses = 0
         self._evictions = 0
+        # WIRING_COMPLETE I2: Create per-instance lock-free counters/histograms
+        # Falls back to no-op if Rust extension unavailable
+        if _RUST_AVAILABLE:
+            self._drop_counter = _rust_ext.create_counter(f"otel_buffer_drops_{id(self)}")
+            self._size_histogram = _rust_ext.create_histogram(f"otel_buffer_size_{id(self)}")
+        else:
+            self._drop_counter = None
+            self._size_histogram = None
 
     @property
     def capacity(self) -> int:
         return self._capacity
 
     def put(self, key: K, value: V) -> None:
-        # Zero-mutex telemetry: emit BEFORE lock acquisition
-        # Rust MPSC channel is lock-free on the sender side
-        _telemetry_inc_put()
+        # WIRING_COMPLETE I2: Zero-mutex telemetry - emit BEFORE lock acquisition
+        # Rust MPSC channel is lock-free on sender side (no GIL contention)
+        if _RING_PUT_COUNTER is not None:
+            _RING_PUT_COUNTER.inc()
 
         with self._lock:
             if key in self._data:
@@ -128,10 +120,14 @@ class BoundedRing[K, V]:
             if len(self._data) >= self._capacity:
                 self._data.popitem(last=False)
                 self._evictions += 1
+                # WIRING_COMPLETE I2: Lock-free drop counter increment
+                if self._drop_counter is not None:
+                    self._drop_counter.inc()
             self._data[key] = value
-            # Record ring size AFTER mutation (still under lock for data)
-            # But telemetry itself doesn't hold any lock
-            _telemetry_record_size(len(self._data))
+            # WIRING_COMPLETE I2: Record ring size AFTER mutation (still under lock for data)
+            # But telemetry itself doesn't hold any lock - uses Rust MPSC
+            if self._size_histogram is not None:
+                self._size_histogram.record_ns(len(self._data))
 
     def get(self, key: K) -> V | None:
         with self._lock:
@@ -186,9 +182,10 @@ class BoundedRing[K, V]:
         Default: returns last N values from the OrderedDict.
         """
         with self._lock:
-            if self._size == 0:
+            size = len(self._data)
+            if size == 0:
                 return []
-            count = min(n, self._size)
+            count = min(n, size)
             # OrderedDict is LRU-order: most recent at end
             values = list(self._data.values())
             return values[-count:]

@@ -90,7 +90,7 @@ def _clonefile_or_copy(src: Path, dst: Path) -> bool:
         # Try APFS clonefile first (macOS) - zero-copy
         os.clonefile(str(src), str(dst))
         return True
-    except AttributeError, OSError:
+    except (AttributeError, OSError):
         # Fallback to shutil.copy2
         try:
             shutil.copy2(src, dst)

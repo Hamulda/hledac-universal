@@ -656,7 +656,7 @@ def __getattr__(name: str) -> object:
     # ISSUE-005 FIX: Try registry first for engines with complex dependencies
     try:
         return _registry_lazy_getattr(name)
-    except AttributeError, KeyError:
+    except (AttributeError, KeyError):
         pass
 
     # Legacy fallback: iterate through _ENGINE_REGISTRY

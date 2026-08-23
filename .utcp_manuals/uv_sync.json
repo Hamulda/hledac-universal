@@ -1,0 +1,23 @@
+{
+  "name": "uv_sync_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "uv_sync",
+      "description": "Sync dependencies with uv package manager",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "extra": { "type": "string", "description": "Extra dependencies to include (e.g. mlx-embed)" }
+        },
+        "required": []
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "uv",
+        "args": ["sync", "${extra:+--extra}", "${extra:-}"]
+      }
+    }
+  ]
+}

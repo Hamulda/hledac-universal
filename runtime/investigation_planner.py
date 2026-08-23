@@ -615,7 +615,7 @@ def _extract_corroboration_scores(cap_synth: dict) -> dict[str, float]:
         for k, v in corr.items():
             try:
                 corroboration_scores[str(k)] = float(v)
-            except TypeError, ValueError:  # noqa: BLE001
+            except (TypeError, ValueError):  # noqa: BLE001
                 pass
     return corroboration_scores
 

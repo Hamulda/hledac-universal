@@ -130,8 +130,8 @@ DEPRECATED_FLAGS: dict[str, DeprecatedFlag] = {
     # Legacy LANCEDB flags (F264E cleanup)
     "HLEDAC_LANCEDB_AUTO_TUNE": DeprecatedFlag(
         old_name="HLEDAC_LANCEDB_AUTO_TUNE",
-        new_name="HLEDAC_LANCEDB_AUTO_TUNE_ENABLED",
-        reason="Renamed for boolean semantics clarity",
+        new_name="HLEDAC_LANCEDB_QUANTIZE",
+        reason="Auto-tune folded into quantize pipeline; enable LANCEDB_QUANTIZE instead",
     ),
 }
 
@@ -242,7 +242,7 @@ class FeatureFlag(Enum):
     STEGDETECT_SIGNED = "HLEDAC_ENABLE_STEGDETECT_SIGNED"
     DIGITAL_GHOST = "HLEDAC_ENABLE_DIGITAL_GHOST"
     IMAGE_OSINT = "HLEDAC_ENABLE_IMAGE_OSINT"
-    BLOCKCHAIN_FORENSICS = "HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER"
+    BLOCKCHAIN_FORENSICS = "HLEDAC_ENABLE_BLOCKCHAIN_FORENSICS"
     NETWORK_RECON = "HLEDAC_ENABLE_NETWORK_RECON"
     CAPTCHA_DETECTION = "HLEDAC_ENABLE_CAPTCHA_DETECTION"
     CAPTCHA_LOCAL = "HLEDAC_ENABLE_CAPTCHA_LOCAL"
@@ -252,7 +252,7 @@ class FeatureFlag(Enum):
     PRIVACY_LAYER = "HLEDAC_ENABLE_PRIVACY_LAYER"
     ZKP = "HLEDAC_ENABLE_ZKP"
     ZERO_ATTRIBUTION = "HLEDAC_ENABLE_ZERO_ATTRIBUTION"
-    NEURO_CRYPTO = "HLEDAC_EXPERIMENTAL_NEURO_CRYPTO"
+    NEURO_CRYPTO = "HLEDAC_ENABLE_NEURO_CRYPTO"
     PIVOT_STAGGER_MS = "HLEDAC_PIVOT_STAGGER_MS"
     SHODAN_JITTER = "HLEDAC_SHODAN_JITTER_SIGMA_S"
     GREYNOISE_JITTER = "HLEDAC_GREYNOISE_JITTER_SIGMA_S"
@@ -362,18 +362,13 @@ class FeatureFlag(Enum):
     MACH_REMAP = "HLEDAC_ENABLE_MACH_REMAP"
     DOC_SANDBOX = "HLEDAC_ENABLE_DOC_SANDBOX"
     EPHEMERAL_WIPE = "HLEDAC_ENABLE_EPHEMERAL_WIPE"
-    NATIVE_EXTRACTION = "HLEDAC_ENABLE_NATIVE_EXTRACTION"
     REMOTE_DEBUG_DISABLE = "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED"
 
     COGNITIVE_SATURATION = "HLEDAC_ENABLE_COGNITIVE_SATURATION"
-    AUTO_RE = "HLEDAC_ENABLE_AUTO_RE"
-    SUBINTERPRETERS = "HLEDAC_ENABLE_SUBINTERPRETERS"
 
     ASYNC_LOG = "HLEDAC_ASYNC_LOG"
 
     ENABLE_DEOBFUSCATE = "HLEDAC_ENABLE_DEOBFUSCATE"
-
-    DEEP_RESEARCH = "HLEDAC_DEEP_RESEARCH"
 
     ASYNC_LOG_DROP_OLDEST = "HLEDAC_ASYNC_LOG_DROP_OLDEST"
     MAX_PENDING_OPS = "HLEDAC_MAX_PENDING_OPS"
@@ -381,9 +376,6 @@ class FeatureFlag(Enum):
     IPFS_GATEWAY_URL = "HLEDAC_IPFS_GATEWAY_URL"
 
     PEAK_BUDGET_GIB = "HLEDAC_PEAK_BUDGET_GIB"
-
-    DEDUP_DISK = "HLEDAC_DEDUP_DISK"
-    DEDUP_SIZE_MB = "HLEDAC_DEDUP_SIZE_MB"
     DEDUP_DIR = "HLEDAC_DEDUP_DIR"
     DEDUP_MAX_NGRAMS = "HLEDAC_DEDUP_MAX_NGRAMS"
 
@@ -395,7 +387,6 @@ class FeatureFlag(Enum):
     DUCKDB_STORE = "HLEDAC_DUCKDB_STORE"
     LANCEDB_STORE = "HLEDAC_LANCEDB_STORE"
     LMDB_STORE = "HLEDAC_LMDB_STORE"
-    SPRINT_STORE = "HLEDAC_SPRINT_STORE"
 
     WHOIS_API = "HLEDAC_WHOIS_API"
     WHOIS_API_KEY = "HLEDAC_WHOIS_API_KEY"
@@ -408,6 +399,8 @@ class FeatureFlag(Enum):
 
     ACQUISITION_PROFILE = "HLEDAC_ACQUISITION_PROFILE"
     RL_TRAIN = "HLEDAC_RL_TRAIN"
+
+    DECISION_CAPTURE = "HLEDAC_ENABLE_DECISION_CAPTURE"
 
 
 @lru_cache(maxsize=1)
@@ -504,6 +497,7 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_ENABLE_STEGDETECT_SIGNED": FlagCategory.FORENSICS,
         "HLEDAC_ENABLE_DIGITAL_GHOST": FlagCategory.FORENSICS,
         "HLEDAC_ENABLE_IMAGE_OSINT": FlagCategory.FORENSICS,
+        "HLEDAC_ENABLE_BLOCKCHAIN_FORENSICS": FlagCategory.FORENSICS,
         "HLEDAC_ENABLE_NETWORK_RECON": FlagCategory.FORENSICS,
         "HLEDAC_ENABLE_CAPTCHA_DETECTION": FlagCategory.FORENSICS,
         "HLEDAC_ENABLE_CAPTCHA_LOCAL": FlagCategory.FORENSICS,
@@ -514,7 +508,7 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_ENABLE_PRIVACY_LAYER": FlagCategory.STEALTH,
         "HLEDAC_ENABLE_ZKP": FlagCategory.STEALTH,
         "HLEDAC_ENABLE_ZERO_ATTRIBUTION": FlagCategory.STEALTH,
-        "HLEDAC_EXPERIMENTAL_NEURO_CRYPTO": FlagCategory.STEALTH,
+        "HLEDAC_ENABLE_NEURO_CRYPTO": FlagCategory.STEALTH,
         # System
         "HLEDAC_CONTENT_HASHER": FlagCategory.SYSTEM,
         "HLEDAC_BENCHMARK": FlagCategory.SYSTEM,
@@ -616,12 +610,9 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_ARROW_EVIDENCE": FlagCategory.STORAGE,
         "HLEDAC_EVIDENCE_DUCKDB": FlagCategory.STORAGE,
         "HLEDAC_ENABLE_CLAIMS_EXTRACTION": FlagCategory.STORAGE,
-        # Browser / Stealth
-        "HLEDAC_BROWSER_MEM_THRESHOLD_GIB": FlagCategory.STEALTH,
+        # Browser (see STEALTH section below)
         # Deobfuscation / Pipeline
-        "HLEDAC_ENABLE_DEOBFUSCATE": FlagCategory.FORENSICS,
-        # Deep Research
-        "HLEDAC_DEEP_RESEARCH": FlagCategory.BRAIN,
+        # Deep Research (HLEDAC_DEEP_RESEARCH is deprecated, use HLEDAC_ENABLE_DEEP_RESEARCH)
         # Async / Logging
         "HLEDAC_ASYNC_LOG_DROP_OLDEST": FlagCategory.SYSTEM,
         "HLEDAC_MAX_PENDING_OPS": FlagCategory.SYSTEM,
@@ -664,6 +655,8 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_BROWSER_MEM_THRESHOLD_GIB": FlagCategory.SYSTEM,
         # Deobfuscation
         "HLEDAC_ENABLE_DEOBFUSCATE": FlagCategory.PIPELINE,
+        # Decision Capture
+        "HLEDAC_ENABLE_DECISION_CAPTURE": FlagCategory.BRAIN,
     }
 
     # Default values (boolean flags default to False unless specified)
@@ -715,6 +708,8 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_RAG_USE_HNSW": True,  # ON by default
         # New: Network / Transport
         "HLEDAC_ENABLE_QUIC": True,  # ON by default
+        # Decision Capture
+        "HLEDAC_ENABLE_DECISION_CAPTURE": True,  # ON by default
     }
 
     # Implication rules (flag → list of required flags)
@@ -896,7 +891,7 @@ class FeatureFlags:
             return default
         try:
             return int(value)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return default
 
     @classmethod
@@ -908,7 +903,7 @@ class FeatureFlags:
             return default
         try:
             return float(value)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return default
 
     @classmethod

@@ -535,7 +535,7 @@ class DuckDBRAGStore:
                     ok_results, errors = _check_gathered(gathered)
                     for err in errors:
                         _logger.debug("[DUCKDB:RAG] close: pending task failed: %s", err)
-            except TimeoutError, Exception:  # noqa: BLE001
+            except (TimeoutError, Exception):  # noqa: BLE001
                 pass
 
 

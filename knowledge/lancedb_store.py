@@ -628,8 +628,9 @@ class LanceDBIdentityStore:
             return
         try:
             with self._cache_env.begin(write=True) as txn:
-                for key, data in items:
-                    txn.put(key.encode(), _msgspec_dumps_str(data))
+                cursor = txn.cursor()
+                encoded = [(key.encode(), _msgspec_dumps_str(data)) for key, data in items]
+                cursor.putmulti(encoded)
         except Exception as e:
             logger.debug(f"LMDB batch put failed ({len(items)} items): {e}")
 
@@ -652,8 +653,9 @@ class LanceDBIdentityStore:
         def _batch_put():
             try:
                 with self._cache_env.begin(write=True) as txn:
-                    for key, val in items:
-                        txn.put(key.encode(), _msgspec_dumps_str(val))
+                    cursor = txn.cursor()
+                    encoded = [(key.encode(), _msgspec_dumps_str(val)) for key, val in items]
+                    cursor.putmulti(encoded)
                 return None
             except Exception as e:
                 logger.warning(f"LMDB batch put failed ({len(items)} items): {e}")
@@ -2570,7 +2572,7 @@ class LanceDBAcademicStore:
             self._embedder = get_mlx_embedder()
             self._embedder_backend = "mlx"
             return
-        except ImportError, Exception:  # noqa: BLE001
+        except (ImportError, Exception):  # noqa: BLE001
             pass
         raise RuntimeError(
             f"""_init_embedder: MLX backend unavailable.\n  Likely cause: running via `python3` instead of `uv run python`.\n  sys.executable: {sys.executable!r}\n  Fix: use `uv run python -m hledac.universal ...`\n  Verify: `uv run python -c 'from mlx_embeddings import load; print("OK")'`"""

@@ -174,7 +174,7 @@ class DnsCache:
                 try:
                     port = int(parts[1])
                     real_host = parts[0]
-                except ValueError, IndexError:
+                except (ValueError, IndexError):
                     port = 443
                     real_host = host
             else:
@@ -232,7 +232,7 @@ class DnsCache:
                     if clean_host.lower().endswith(".onion") or clean_host.lower().endswith(".i2p"):
                         continue
                     hosts.add(clean_host)
-            except ValueError, OSError:
+            except (ValueError, OSError):
                 continue
 
         host_list = list(hosts)

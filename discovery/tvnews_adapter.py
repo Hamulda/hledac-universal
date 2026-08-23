@@ -102,7 +102,7 @@ async def async_search_tvnews(
     # Bounds
     try:
         max_results = max(1, min(int(max_results), _HARD_MAX_RESULTS))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         max_results = _MAX_RESULTS
 
     query = query.strip() if query else ""

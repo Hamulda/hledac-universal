@@ -163,7 +163,7 @@ class CTLogClient:
                     import compression.zstd as _zstd
 
                     return decode(_zstd.decompress(zst_path.read_bytes()))
-                except ImportError, Exception:  # noqa: BLE001
+                except (ImportError, Exception):  # noqa: BLE001
                     pass
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
@@ -177,7 +177,7 @@ class CTLogClient:
                         import compression.zstd as _zstd
 
                         return decode(_zstd.decompress(zst_path.read_bytes()))
-                    except ImportError, Exception:  # noqa: BLE001
+                    except (ImportError, Exception):  # noqa: BLE001
                         pass
             if cache_path.exists():
                 age = time.time() - cache_path.stat().st_mtime
@@ -205,7 +205,7 @@ class CTLogClient:
             import compression.zstd as _zstd
 
             zst_path.write_bytes(_zstd.compress(encode(result)))
-        except ImportError, Exception:
+        except (ImportError, Exception):
             cache_path.write_bytes(encode(result))
         return result
 
@@ -363,7 +363,7 @@ class CTLogClient:
                     import compression.zstd as _zstd
 
                     return decode(_zstd.decompress(zst_path.read_bytes()))
-                except ImportError, Exception:  # noqa: BLE001
+                except (ImportError, Exception):  # noqa: BLE001
                     pass
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
@@ -383,7 +383,7 @@ class CTLogClient:
             import compression.zstd as _zstd
 
             zst_path.write_bytes(_zstd.compress(encode(certs)))
-        except ImportError, Exception:
+        except (ImportError, Exception):
             cache_path.write_bytes(encode(certs))
         return certs
 

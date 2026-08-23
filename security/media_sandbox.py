@@ -1645,7 +1645,7 @@ except Exception as e:
                     real_pid = _struct.unpack("<I", data)[0]
                     _os.unlink(handshake_path)
                     break
-            except FileNotFoundError, OSError:  # noqa: BLE001
+            except (FileNotFoundError, OSError):  # noqa: BLE001
                 pass
             await _asyncio.sleep(0.01)
 
@@ -1667,7 +1667,7 @@ except Exception as e:
                         result = _os.read(fd, 65536)
                         _os.close(fd)
                         _os.unlink(result_path)
-                    except FileNotFoundError, OSError:
+                    except (FileNotFoundError, OSError):
                         result = b""
                     return result, rc
             except ChildProcessError:
@@ -1677,7 +1677,7 @@ except Exception as e:
         # Timeout — kill child
         try:
             await _asyncio.to_thread(_os.kill, real_pid, 9)
-        except ProcessLookupError, OSError:  # noqa: BLE001
+        except (ProcessLookupError, OSError):  # noqa: BLE001
             pass
         try:
             _os.unlink(result_path)
@@ -2071,7 +2071,7 @@ async def _collect_pymupdf_mach_child(child_pid: int, timeout_s: float, script: 
             result_data = os.read(os.open(result_path, os.O_RDONLY), 1024 * 1024)
             os.unlink(result_path)
             return result_data, 0
-        except FileNotFoundError, OSError:
+        except (FileNotFoundError, OSError):
             await asyncio.sleep(0.01)
     return b'{"error": "timeout"}', -1
 

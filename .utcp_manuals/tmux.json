@@ -1,0 +1,68 @@
+{
+  "name": "tmux_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "tmux_sessions",
+      "description": "List all tmux sessions",
+      "inputs": {
+        "type": "object",
+        "properties": {}
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "tmux",
+        "args": ["list-sessions"]
+      }
+    },
+    {
+      "name": "tmux_new_session",
+      "description": "Create a new tmux session",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Session name" },
+          "command": { "type": "string", "description": "Command to run in session" }
+        },
+        "required": ["name"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "tmux",
+        "args": ["new-session", "-d", "-s", "${name}"]
+      }
+    },
+    {
+      "name": "tmux_kill_session",
+      "description": "Kill a tmux session",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Session name to kill" }
+        },
+        "required": ["name"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "tmux",
+        "args": ["kill-session", "-t", "${name}"]
+      }
+    },
+    {
+      "name": "tmux_windows",
+      "description": "List windows in a tmux session",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "session": { "type": "string", "description": "Session name (default: current)" }
+        }
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "tmux",
+        "args": ["list-windows", "-t", "${session}"]
+      }
+    }
+  ]
+}

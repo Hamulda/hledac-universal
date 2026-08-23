@@ -874,7 +874,7 @@ class ArtiClient:
                     return None
                 try:
                     status_code = int(status_parts[1])
-                except ValueError, IndexError:
+                except (ValueError, IndexError):
                     return None
 
                 # Skip response headers

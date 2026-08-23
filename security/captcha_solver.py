@@ -161,7 +161,7 @@ class VisionCaptchaSolver:
                 _COREML_AVAILABLE = True
                 try:
                     _COREMLTOOLS_VERSION = float(_ct.__version__)
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     _COREMLTOOLS_VERSION = 6.0
             except ImportError:
                 _COREML_AVAILABLE = False

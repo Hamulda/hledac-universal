@@ -438,7 +438,7 @@ class UnifiedCacheManager:
                 return cache.memory_size
             if hasattr(cache, "size"):
                 return cache.size * 256 * 1024 * 1024
-        except ImportError, Exception:
+        except (ImportError, Exception):
             pass
         return 256 * 1024 * 1024
 

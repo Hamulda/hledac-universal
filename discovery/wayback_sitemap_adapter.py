@@ -172,7 +172,7 @@ async def _validate_and_prepare(
     """
     try:
         max_results = max(1, min(int(max_results), _HARD_MAX_HITS))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         max_results = 50
 
     raw_input = domain_or_url.strip() if domain_or_url else ""

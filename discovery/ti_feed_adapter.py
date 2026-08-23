@@ -1302,7 +1302,7 @@ class WaybackArchiveAdapter(SourceAdapter):
                         )
                         if len(entries) >= limit:
                             return tuple(entries)
-        except TimeoutError, Exception:  # noqa: BLE001
+        except (TimeoutError, Exception):  # noqa: BLE001
             pass
         return tuple(entries)
 

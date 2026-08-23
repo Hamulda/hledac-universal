@@ -427,7 +427,7 @@ async def _python_execute_handler(
             _prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(timeout_seconds)
             _alarm_registered = True
-        except ValueError, OSError:  # noqa: BLE001
+        except (ValueError, OSError):  # noqa: BLE001
             pass
     safe_builtins = {
         "abs": builtins.abs,

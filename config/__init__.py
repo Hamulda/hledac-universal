@@ -550,13 +550,13 @@ def _adaptive_config_lock() -> threading.Lock:
     def _clamp_int(self, raw: int | float | str, min_val: int, max_val: int, default: int) -> int:
         try:
             return max(min_val, min(max_val, int(raw)))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return default
 
     def _clamp_float(self, raw: int | float | str, min_val: float, max_val: float, default: float) -> float:
         try:
             return max(min_val, min(max_val, float(raw)))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return default
 
 

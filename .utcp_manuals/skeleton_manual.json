@@ -1,0 +1,23 @@
+{
+  "name": "skeleton_tools",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "get_file_skeleton",
+      "description": "Vrátí pouze signatury funkcí, typové anotace a definice tříd bez implementačních detailů.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "file_path": { "type": "string", "description": "Cesta k Python/Rust souboru" }
+        },
+        "required": ["file_path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "python3",
+        "args": [".utcp_tools/skeleton.py", "${file_path}"]
+      }
+    }
+  ]
+}

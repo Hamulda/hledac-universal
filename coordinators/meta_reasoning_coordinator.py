@@ -175,7 +175,7 @@ def _get_seeded_rng() -> random.Random | secrets.SystemRandom:
         if seed_state is not None:
             # Use the PRNG seed from SprintSeedState for deterministic replay
             return random.Random(seed_state.prng_seed)
-    except ImportError, AttributeError:  # noqa: BLE001
+    except (ImportError, AttributeError):  # noqa: BLE001
         pass
     return _RNG
 

@@ -132,7 +132,7 @@ def _register_dedup_manager_finalizer(instance: DedupManager) -> weakref.finaliz
 
             signal.signal(signal.SIGTERM, _dedup_manager_sigterm_handler)
             _SIGTERM_HANDLER_REGISTERED = True
-        except AttributeError, OSError:  # noqa: BLE001
+        except (AttributeError, OSError):  # noqa: BLE001
             pass
         try:
             atexit.register(_dedup_manager_atexit_close)

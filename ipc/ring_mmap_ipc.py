@@ -558,7 +558,7 @@ class RingMMapIPC:
             async with asyncio.timeout(timeout):
                 return await future
 
-        except TimeoutError, Exception:
+        except (TimeoutError, Exception):
             self._pending.pop(seq, None)
             return None
 

@@ -274,7 +274,7 @@ class GopherTransport:
                     port=int(parts[4].decode("ascii", errors="replace")),
                 )
                 items.append(item)
-            except ValueError, IndexError:
+            except (ValueError, IndexError):
                 continue
         return items
 

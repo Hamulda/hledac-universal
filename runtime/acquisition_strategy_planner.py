@@ -420,14 +420,14 @@ def _load_feed_budget_from_env() -> FeedDominanceBudget:
         try:
             val = os.environ.get(key, "")
             return max(1, min(10000, int(val))) if val else default
-        except ValueError, OverflowError:
+        except (ValueError, OverflowError):
             return default
 
     def _float(key: str, default: float | None) -> float | None:
         try:
             val = os.environ.get(key, "")
             return max(0.0, min(1.0, float(val))) if val else default
-        except ValueError, OverflowError:
+        except (ValueError, OverflowError):
             return default
 
     return FeedDominanceBudget(

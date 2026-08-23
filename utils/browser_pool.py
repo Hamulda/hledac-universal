@@ -84,7 +84,7 @@ def _check_memory_pressure() -> None:
     threshold = _BROWSER_MEM_THRESHOLD_GIB
     try:
         threshold = float(os.environ.get("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", str(threshold)))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         threshold = _BROWSER_MEM_THRESHOLD_GIB
     rss = _rss_gib()
     if rss > threshold > 0:

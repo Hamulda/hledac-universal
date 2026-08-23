@@ -403,7 +403,7 @@ class BGEM3Embedder:
             import mlx.core as mx
 
             mx.metal.clear_cache()
-        except ImportError, AttributeError:
+        except (ImportError, AttributeError):
             pass
         logger.info("[BGE-M3] Model unloaded, memory freed")
 

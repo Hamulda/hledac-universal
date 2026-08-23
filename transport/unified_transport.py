@@ -360,7 +360,7 @@ async def get_transport_client(policy: TransportPolicy, url: str) -> tuple[bool,
 
         parsed = urlparse(url)
         host = parsed.netloc or ""
-    except ValueError, OSError:  # urlparse: ValueError for malformed URLs, OSError for IDN encoding  # noqa: BLE001
+    except (ValueError, OSError):  # urlparse: ValueError for malformed URLs, OSError for IDN encoding  # noqa: BLE001
         pass
     kind = policy.kind
     if kind == TransportKind.HTTPX_H2:
@@ -509,7 +509,7 @@ async def fetch_via_unified(
             try:
                 if hasattr(resp, "url") and resp.url:
                     final_url = str(resp.url)
-            except ValueError, AttributeError:  # str(resp.url) can raise ValueError or AttributeError  # noqa: BLE001
+            except (ValueError, AttributeError):  # str(resp.url) can raise ValueError or AttributeError  # noqa: BLE001
                 pass
             return {
                 "url": url,

@@ -78,34 +78,42 @@ def _require_mlx() -> None:
         raise RuntimeError("MLX not available, cannot use GNN functionality")
 
 
-if _ensure_mlx_gnn():
+class GraphSAGE:
+    """Stub when MLX not available — replaced by lazy MLX version on first use."""
 
-    class GraphSAGE(nn.Module):
-        """GraphSAGE model pro predikci hran."""
+    def __init__(self, *args, **kwargs) -> None:
+        raise RuntimeError("MLX not available, cannot create GraphSAGE")
 
-        __slots__ = ("layers", "out_proj")
+    def __call__(self, *args, **kwargs):
+        raise RuntimeError("MLX not available")
 
-        def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, num_layers: int = 2) -> None:
-            super().__init__()
-            self.layers = []
-            for i in range(num_layers):
-                self.layers.append(nn.Linear(in_dim if i == 0 else hidden_dim, hidden_dim))
-            self.out_proj = nn.Linear(hidden_dim, out_dim)
 
-        def __call__(self, x, adj):
-            for layer in self.layers:
-                x = mx.relu(layer(adj @ x))
-            return self.out_proj(x)
-else:
+def _get_graphsage_class():
+    """Lazily return GraphSAGE class (MLX version or stub)."""
+    if _ensure_mlx_gnn():
+        # Build MLX version dynamically to avoid module-level import
+        _mx = mx
+        _nn = nn
 
-    class GraphSAGE:
-        """Stub when MLX not available."""
+        class _GraphSAGE(_nn.Module):
+            """GraphSAGE model pro predikci hran."""
 
-        def __init__(self, *args, **kwargs) -> None:
-            raise RuntimeError("MLX not available, cannot create GraphSAGE")
+            __slots__ = ("layers", "out_proj")
 
-        def __call__(self, *args, **kwargs):
-            raise RuntimeError("MLX not available")
+            def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, num_layers: int = 2) -> None:
+                super().__init__()
+                self.layers = []
+                for i in range(num_layers):
+                    self.layers.append(_nn.Linear(in_dim if i == 0 else hidden_dim, hidden_dim))
+                self.out_proj = _nn.Linear(hidden_dim, out_dim)
+
+            def __call__(self, x, adj):
+                for layer in self.layers:
+                    x = _mx.relu(layer(adj @ x))
+                return self.out_proj(x)
+
+        return _GraphSAGE
+    return GraphSAGE
 
 
 def neighbor_sampling(adj_list: list[list[int]], node_ids: list[int], k: int = 10):
@@ -696,12 +704,12 @@ class GNNPredictor:
     def __init__(self, in_dim: int = 64, hidden_dim: int = 32, out_dim: int = 1) -> None:
         if not MLX_GNN_AVAILABLE:
             raise RuntimeError("MLX not available, cannot create GNNPredictor")
-        self.model = GraphSAGE(in_dim, hidden_dim, out_dim)
+        self.model = _get_graphsage_class()(in_dim, hidden_dim, out_dim)
         try:
             import mlx.optimizers as optim
 
             self.optimizer = optim.Adam(learning_rate=0.001)
-        except ImportError, AttributeError:
+        except (ImportError, AttributeError):
             self.optimizer = None
         self.trained = False
         self._training_scheduled = False
@@ -1478,12 +1486,13 @@ def train_gnn_task(
     features: matice (n_nodes, in_dim) – vstupní příznaky uzlů
     labels: vektor (n_nodes,) – 1 pro pozitivní (hrana existuje), 0 pro negativní
     """
-    if not MLX_GNN_AVAILABLE:
+    if not _ensure_mlx_gnn():
         logger.warning("MLX not available, skipping GNN training")
         return
     try:
+        import mlx.core as mx
+        import mlx.nn as nn
         import mlx.optimizers as optim
-        from mlx.nn import losses
     except (ImportError, AttributeError) as e:
         logger.warning(f"MLX imports failed: {e}, skipping GNN training")
         return
@@ -1507,12 +1516,12 @@ def train_gnn_task(
             adj_np[u, v] = 1.0
             adj_np[v, u] = 1.0
     adj = mx.array(adj_np)
-    model = GraphSAGE(features.shape[1], 32, 1)
+    model = _get_graphsage_class()(features.shape[1], 32, 1)
     optimizer = optim.Adam(learning_rate=learning_rate)
 
     def loss_fn(model, x, adj, y):
         pred = model(x, adj).squeeze()
-        return losses.binary_cross_entropy(pred, y)
+        return nn.binary_cross_entropy(pred, y)
 
     loss_and_grad_fn = nn.value_and_grad(model, loss_fn)
     for epoch in range(num_epochs):

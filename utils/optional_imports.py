@@ -203,7 +203,7 @@ class _LazyModuleProxy:
                     self._cache = getattr(mod, attr_name)
                 else:
                     self._cache = importlib.import_module(self._dotted)
-            except ImportError, AttributeError:
+            except (ImportError, AttributeError):
                 self._cache = None
             self._resolved = True
         return self._cache
@@ -307,7 +307,7 @@ class _OptionalImport:
             if self._attr:
                 return getattr(mod, self._attr)
             return mod
-        except ImportError, AttributeError:
+        except (ImportError, AttributeError):
             return None
 
     def __call__(self) -> Any:

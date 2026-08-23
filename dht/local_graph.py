@@ -448,5 +448,63 @@ class LocalGraphStore:
         except Exception:
             return []
 
+    async def bfs_traverse(self, start_node_id: str, max_hops: int = 3) -> list[str]:
+        """
+        BFS traversal from a starting node, returning all reachable node IDs.
+
+        ISSUE-004: Eliminates 5-10 asyncio.to_thread() hops with single Rust call.
+
+        Args:
+            start_node_id: Starting node ID for traversal
+            max_hops: Maximum traversal depth (capped at 10)
+
+        Returns:
+            List of reachable node IDs (including start_node_id)
+        """
+        if _use_rust_lmdb():
+            path_str = str(self.db_path.parent)
+            result = _get_lmdb_dht().lmdb_dht_bfs_traverse(
+                path_str,
+                [start_node_id.encode()],
+                max_hops,
+            )
+            return [node_id.decode(errors="replace") for node_id in result]
+
+        # Fallback: Python BFS via asyncio.to_thread
+        visited: set[str] = set()
+        frontier: list[str] = [start_node_id]
+
+        for _ in range(max_hops):
+            if not frontier:
+                break
+            next_frontier: list[str] = []
+
+            async def get_neighbors_for_batch(nodes: list[str]) -> dict[str, list[str]]:
+                def _batch_get() -> dict[str, list[str]]:
+                    result_out: dict[str, list[str]] = {}
+                    with self.env.begin() as txn:
+                        for node_id in nodes:
+                            data = txn.get(f"neighbors:{node_id}".encode())
+                            if data:
+                                result_out[node_id] = decode(data)
+                            else:
+                                result_out[node_id] = []
+                    return result_out
+
+                return await _get_lmdb_pool().run_lmdb(_batch_get)
+
+            neighbors_map = await get_neighbors_for_batch(frontier)
+            for node_id in frontier:
+                visited.add(node_id)
+                for neighbor in neighbors_map.get(node_id, []):
+                    if neighbor not in visited:
+                        next_frontier.append(neighbor)
+            frontier = next_frontier
+
+        return list(visited)
+
     async def close(self) -> None:
+        if _use_rust_lmdb():
+            path_str = str(self.db_path.parent)
+            _get_lmdb_dht().lmdb_dht_close_env(path_str)
         self.env.close()

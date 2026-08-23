@@ -9,7 +9,7 @@ ISSUE-014 REFACTOR: Modularized into focused submodules:
 - _retry_strategy.py: Tenacity retry logic, backoff, circuit breaker integration
 - _error_classifier.py: Fetch error taxonomy and classification
 - _tls_extractor.py: TLS certificate metadata extraction
-- _js_renderers.py: JS rendering via Camoufox, nodriver, Playwright
+- _js_renderers.py: JS rendering via nodriver, Playwright
 - _html_processor.py: HTML parsing, pattern matching, metadata extraction
 
 MODERN-35: LAZY IMPORTS
@@ -143,15 +143,12 @@ def __getattr__(name: str) -> Any:
         "all_js_renderers_unavailable",
         "reset_js_renderer_capability_cache",
         "refresh_js_renderer_capability",
-        "fetch_with_camoufox",
         "fetch_with_nodriver",
         "fetch_with_playwright",
         "TOR_SOCKS_PROXY",
-        "_get_camoufox_lock",
         "compute_effective_max_bytes",
         "teardown_browser_pool",
         "_get_js_renderer_semaphore",
-        "_camoufox_locked",
         "_playwright_locked",
     ):
         return _lazy_import("_js_renderers", name)
@@ -573,7 +570,7 @@ def _reset_webkit_transport_telemetry() -> None:
     except ImportError:  # noqa: BLE001
         pass
 
-# _CAMOUFOX_LOCK and _get_camoufox_lock imported from _js_renderers
+# _JS_RENDERER_SEMAPHORE imported from _js_renderers
 DEFAULT_UA: Final[str] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 _BROWSER_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0')
 _ACCEPT_LANGUAGE_POOL: tuple[str, ...] = ('en-US,en;q=0.9', 'en-GB,en;q=0.8', 'en-US,en;q=0.9,de;q=0.8', 'en-US,en;q=0.9,fr;q=0.8', 'en-US,en;q=0.9,es;q=0.8', 'en-US,en;q=0.9,ja;q=0.8', 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7', 'de-DE,de;q=0.9,en;q=0.8', 'fr-FR,fr;q=0.9,en;q=0.8', 'ja-JP,ja;q=0.9,en;q=0.8', 'en-US,en;q=0.9', 'en-AU,en;q=0.9', 'en-CA,en;q=0.9', 'en-IE,en;q=0.9', 'en-NZ,en;q=0.9')
@@ -1250,36 +1247,6 @@ async def _peek_aiohttp_first_chunk(chunks: AsyncIterator[bytes]) -> tuple[bool,
         return (False, None)
     return (_looks_xmlish(first_chunk), first_chunk)
 
-async def _fetch_with_camoufox(url: str, timeout: float=15.0) -> str:
-    """
-    Fetch JS-heavy page via Camoufox (Firefox-based anti-detect).
-    Max 1 instance, protected by _CAMOUFOX_LOCK singleton.
-    M1-optimized: headless, WebGL spoofed for Apple M1.
-
-    F202H: Uses opsec_policy.get_renderer_policy() for M1 conflict guard —
-    replaces inline is_embedding_context_active() check with centralized policy.
-    """
-    try:
-        from hledac.universal.embedding_pipeline import is_embedding_context_active
-        from hledac.universal.runtime.opsec_policy import OPSECContext, get_renderer_policy
-        has_model = is_embedding_context_active()
-        ctx = OPSECContext(has_model_context=has_model)
-        policy = get_renderer_policy(ctx)
-        if not policy.allowed:
-            logger.warning(f'[F202H] Renderer blocked by opsec_policy: {policy.blocked_reason} — skipping Camoufox for {url}')
-            return ''
-    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.warning('Error checking renderer policy, proceeding with caution: %s', e)
-    try:
-    except ImportError:
-        logger.debug('camoufox not installed, JS fetch unavailable')
-        return ''
-    async with _get_js_renderer_semaphore():
-        return await _camoufox_locked(url, timeout)
-_CAMOUFOX_OS_ROTATION: tuple[str, ...] = ('macos', 'windows', 'linux')
-_CAMOUFOX_MAX_RETRIES: int = 3
-
-# _camoufox_locked imported from _js_renderers
 # _fetch_with_nodriver imported from _js_renderers
 async def _fetch_with_playwright(url: str, timeout: float=15.0) -> str:
     """
@@ -1889,7 +1856,7 @@ async def async_fetch_public_text_batch(
         timeout_s: Per-request timeout in seconds (default 35 s).
         max_bytes: Max bytes to read per response (default MAX_BYTES_DEFAULT).
         use_stealth: Enable stealth/Tor transport (default False).
-        use_js: Enable JS rendering via camoufox/nodriver (default False).
+        use_js: Enable JS rendering via nodriver/playwright (default False).
         use_doh: Enable DNS-over-HTTPS (default False).
         js_confidence: Confidence that JS is needed (0.0–1.0, default 0.8).
         priority: Request priority 1–10 (default 5, lower = higher priority).

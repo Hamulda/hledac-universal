@@ -197,6 +197,6 @@ def simd_feature_level() -> int:
             from hledac_rust_extensions import simd_feature_level
 
             return simd_feature_level()
-        except ImportError, AttributeError:
+        except (ImportError, AttributeError):
             return 1  # Rust available, but simd_feature_level not exposed
     return 0

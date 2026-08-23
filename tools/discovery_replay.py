@@ -234,7 +234,7 @@ def _default_ttl() -> int:
             value = int(raw)
             if value > 0:
                 return value
-        except TypeError, ValueError:  # noqa: BLE001
+        except (TypeError, ValueError):  # noqa: BLE001
             pass
     return _DEFAULT_TTL_SECONDS
 

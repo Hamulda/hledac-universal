@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal._core.env_config import ENV
 
 if TYPE_CHECKING:
     pass
@@ -43,7 +44,7 @@ try:
     import compression.zstd as _zstd
 
     ZSTD_AVAILABLE = True
-except ImportError, Exception:
+except (ImportError, Exception):
     ZSTD_AVAILABLE = False
     _zstd = None
 log = logging.getLogger(__name__)
@@ -51,11 +52,11 @@ _POLICY_PATH = Path(__file__).parent / ".sprint_policy_state.json"
 _QMIX_WEIGHTS_PATH = Path(__file__).parent / ".qmix_weights.npz"
 _EXPLORATION_INTERVAL = 5
 _DEFAULT_EPSILON = 0.1
-_QMIX_TRAIN_INTERVAL = int(os.environ.get("HLEDAC_RL_TRAIN_INTERVAL", "10"))
+_QMIX_TRAIN_INTERVAL = ENV.get_int("HLEDAC_RL_TRAIN_INTERVAL", default=10)
 _MIN_REPLAY_SIZE = 256
 _TRAIN_BATCH_SIZE = 32
 _RAM_TRAIN_SKIP_PCT = 80
-_RAM_GATE_DISABLED = os.environ.get("HLEDAC_RL_SKIP_RAM_GATE", "0") == "1"
+_RAM_GATE_DISABLED = ENV.get_bool("HLEDAC_RL_SKIP_RAM_GATE", default=False)
 _TRAIN_COOLDOWN_S = 1.0
 _MAX_TRAIN_STEPS_PER_SPRINT = 1
 _Q_CACHE_TTL_S = 5.0
@@ -168,12 +169,12 @@ class SprintPolicyManager:
 
     def __init__(
         self,
-        enabled: bool = os.environ.get("HLEDAC_DISABLE_RL") != "1",
+        enabled: bool = ENV.get_str("HLEDAC_DISABLE_RL") != "1",
         policy_path: Path | None = None,
         epsilon: float = _DEFAULT_EPSILON,
         exploration_interval: int = _EXPLORATION_INTERVAL,
         qmix_train_interval: int | None = None,
-        rl_train_mode: bool = os.environ.get("HLEDAC_RL_TRAIN") == "1",
+        rl_train_mode: bool = ENV.get_str("HLEDAC_RL_TRAIN") == "1",
     ) -> None:
         """
         Args:
@@ -687,7 +688,7 @@ class SprintPolicyManager:
                 )
             except Exception as e:
                 log.debug("[SprintPolicyManager] replay buffer push failed: %s", e)
-        _env_train = os.environ.get("HLEDAC_RL_TRAIN", "")
+        _env_train = ENV.get_str("HLEDAC_RL_TRAIN")
         if (
             not self._rl_train_mode
             and _env_train != "0"

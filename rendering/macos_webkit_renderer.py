@@ -143,7 +143,7 @@ def _probe_worker_capability() -> tuple[bool, str]:
                 return (False, MACOS_WEBKIT_REASONS.WORKER_ERROR)
             try:
                 result = _json.decode(stdout_bytes.decode("utf-8", errors="replace"))
-            except ValueError, UnicodeDecodeError:
+            except (ValueError, UnicodeDecodeError):
                 return (False, MACOS_WEBKIT_REASONS.WORKER_ERROR)
             if result.get("ok"):
                 return (True, MACOS_WEBKIT_REASONS.SUCCESS)
@@ -264,7 +264,7 @@ async def fetch_with_macos_webkit(
                                 elapsed_ms=elapsed_ms,
                                 rendered_bytes=err_result.get("rendered_bytes", 0),
                             )
-                    except ValueError, UnicodeDecodeError:  # noqa: BLE001
+                        except (ValueError, UnicodeDecodeError):  # noqa: BLE001
                         pass
                     return WebKitRenderResult(
                         html=None,
@@ -275,7 +275,7 @@ async def fetch_with_macos_webkit(
                     )
                 try:
                     result = _json.decode(stdout_bytes.decode("utf-8", errors="replace"))
-                except ValueError, UnicodeDecodeError:
+            except (ValueError, UnicodeDecodeError):
                     elapsed_ms = (time.monotonic() - t0) * 1000
                     return WebKitRenderResult(
                         html=None,

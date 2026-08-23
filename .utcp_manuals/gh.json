@@ -1,0 +1,92 @@
+{
+  "name": "gh_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "gh_issue_list",
+      "description": "List GitHub issues for a repository",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "repo": { "type": "string", "description": "Repository (owner/repo)" },
+          "state": { "type": "string", "description": "Filter: open, closed, all (default: open)" },
+          "limit": { "type": "number", "description": "Max issues to show (default: 20)" }
+        },
+        "required": ["repo"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "gh",
+        "args": ["issue", "list", "-R", "${repo}", "--state", "${state:-open}", "-L", "${limit:-20}"]
+      }
+    },
+    {
+      "name": "gh_pr_list",
+      "description": "List GitHub pull requests",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "repo": { "type": "string", "description": "Repository (owner/repo)" },
+          "state": { "type": "string", "description": "Filter: open, closed, merged, all (default: open)" }
+        },
+        "required": ["repo"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "gh",
+        "args": ["pr", "list", "-R", "${repo}", "--state", "${state:-open}"]
+      }
+    },
+    {
+      "name": "gh_issue_view",
+      "description": "View a specific GitHub issue",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "repo": { "type": "string", "description": "Repository (owner/repo)" },
+          "number": { "type": "number", "description": "Issue number" }
+        },
+        "required": ["repo", "number"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "gh",
+        "args": ["issue", "view", "${number}", "-R", "${repo}"]
+      }
+    },
+    {
+      "name": "gh_pr_view",
+      "description": "View a specific pull request",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "repo": { "type": "string", "description": "Repository (owner/repo)" },
+          "number": { "type": "number", "description": "PR number" }
+        },
+        "required": ["repo", "number"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "gh",
+        "args": ["pr", "view", "${number}", "-R", "${repo}"]
+      }
+    },
+    {
+      "name": "gh_repo_view",
+      "description": "View repository information",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "repo": { "type": "string", "description": "Repository (owner/repo)" }
+        },
+        "required": ["repo"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "gh",
+        "args": ["repo", "view", "${repo}"]
+      }
+    }
+  ]
+}

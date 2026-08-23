@@ -679,7 +679,7 @@ class ResourceLedger:
                 if force:
                     try:
                         os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError, PermissionError:
+                    except (ProcessLookupError, PermissionError):
                         pass
         if owner:
             self.release_all(owner)

@@ -3614,7 +3614,7 @@ class EvidenceLog:
             return None
         try:
             confidence = max(0.0, min(1.0, float(confidence)))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             confidence = 0.95
         bounded_result = self._bound_forensic_value(forensic_result)
         payload = {
@@ -3905,7 +3905,7 @@ class EvidenceLog:
             # Falls back to shutil.copy2 na non-APFS / Linux
             try:
                 os.clonefile(self._persist_path, export_path)
-            except AttributeError, OSError:
+            except (AttributeError, OSError):
                 import shutil
 
                 shutil.copy2(self._persist_path, export_path)

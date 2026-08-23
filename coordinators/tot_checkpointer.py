@@ -1069,7 +1069,7 @@ class TransactionalToTCheckpointer:
             try:
                 step_str = latest.stem.split("_step")[-1]
                 step = int(step_str)
-            except ValueError, IndexError:
+            except (ValueError, IndexError):
                 step = 0
             return (step, nodes, computed)
         except Exception:  # noqa: BLE001

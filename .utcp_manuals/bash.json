@@ -1,0 +1,25 @@
+{
+  "name": "bash_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "bash",
+      "description": "Execute bash commands on macOS. Returns command output.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "command": { "type": "string", "description": "bash command to execute" },
+          "workdir": { "type": "string", "description": "Working directory (optional)" },
+          "timeout": { "type": "number", "description": "Timeout in seconds (default 120)" }
+        },
+        "required": ["command"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "bash",
+        "args": ["-c", "${command}"]
+      }
+    }
+  ]
+}

@@ -106,12 +106,25 @@ impl Histogram {
         if value_ns <= 1_000 {
             return 0;
         }
-        let mut idx = 0;
-        let base: f64 = 1.0;
-        while idx < 127 && (base * 1.01_f64.powi(idx as i32)) < value_ns as f64 {
-            idx += 1;
+        // Binary search over pre-sorted boundaries: O(log 128) = 7 comparisons
+        // instead of O(128) linear scan
+        let boundaries = &self.boundaries;
+        let mut lo = 0usize;
+        let mut hi = boundaries.len() - 1; // 127
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if boundaries[mid] < value_ns {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
-        idx.min(127)
+        // Clamp to last bucket if value exceeds all boundaries
+        if lo >= boundaries.len() {
+            boundaries.len() - 1
+        } else {
+            lo
+        }
     }
 
     #[inline]
@@ -121,18 +134,10 @@ impl Histogram {
         self.total.fetch_add(1, Ordering::Relaxed);
         self.sum.fetch_add(ns, Ordering::Relaxed);
         // Update min/max with relaxed ordering (approximate is fine for histograms)
-        let current_min = self.min.load(Ordering::Relaxed);
-        if ns < current_min {
-            let _ =
-                self.min
-                    .compare_exchange(current_min, ns, Ordering::Relaxed, Ordering::Relaxed);
-        }
-        let current_max = self.max.load(Ordering::Relaxed);
-        if ns > current_max {
-            let _ =
-                self.max
-                    .compare_exchange(current_max, ns, Ordering::Relaxed, Ordering::Relaxed);
-        }
+        // Atomic min/max — fetch_min/fetch_max are lock-free on Rust 1.77+
+        // No CAS loop needed — single atomic op instead of load+compare_exchange
+        self.min.fetch_min(ns, Ordering::Relaxed);
+        self.max.fetch_max(ns, Ordering::Relaxed);
     }
 
     #[inline]
@@ -179,7 +184,7 @@ impl Histogram {
     pub fn stats(&self) -> HistogramStats {
         let total = self.total.load(Ordering::Relaxed);
         let sum = self.sum.load(Ordering::Relaxed);
-        let (p50, p95, p99) = self);
+        let (p50, p95, p99) = self.percentiles();
         HistogramStats {
             count: total,
             mean_ns: if total > 0 { sum / total } else { 0 },
@@ -204,7 +209,7 @@ impl Histogram {
     pub fn extended_stats(&self) -> ExtendedHistogramStats {
         let total = self.total.load(Ordering::Relaxed);
         let sum = self.sum.load(Ordering::Relaxed);
-        let percs = self);
+        let percs = self.extended_percentiles();
         let min_val = if total > 0 {
             self.min.load(Ordering::Relaxed)
         } else {
@@ -322,6 +327,7 @@ pub struct TelemetryAggregator {
     histograms: Arc<Mutex<HashMap<String, Histogram>>>,
     gauges: Arc<Mutex<HashMap<String, Gauge>>>,
     sender: Sender<TelemetryEvent>,
+    dropped_events: AtomicU64, // MPSC overflow counter — tracks events dropped when channel is full
     _handle: std::thread::JoinHandle<()>,
 }
 
@@ -331,16 +337,18 @@ impl TelemetryAggregator {
         let counters = Arc::new(Mutex::new(HashMap::new()));
         let histograms = Arc::new(Mutex::new(HashMap::new()));
         let gauges = Arc::new(Mutex::new(HashMap::new()));
+        let dropped_events = Arc::new(AtomicU64::new(0));
 
-        let counters_clone = counters);
-        let histograms_clone = histograms);
-        let gauges_clone = gauges);
+        let counters_clone = counters.clone();
+        let histograms_clone = histograms.clone();
+        let gauges_clone = gauges.clone();
+        let dropped_clone = dropped_events.clone();
 
         let handle = std::thread::spawn(move || {
             while let Ok(event) = rx.recv() {
                 match event {
                     TelemetryEvent::Counter { name, count, bytes } => {
-                        let mut c = counters_clone);
+                        let mut c = counters_clone.lock();
                         let counter = c.entry(name).or_insert_with(AtomicCounter::new);
                         counter.add(count);
                         if bytes > 0 {
@@ -348,12 +356,12 @@ impl TelemetryAggregator {
                         }
                     }
                     TelemetryEvent::Histogram { name, duration_ns } => {
-                        let mut h = histograms_clone);
+                        let mut h = histograms_clone.lock();
                         let hist = h.entry(name).or_insert_with(Histogram::new);
                         hist.record_ns(duration_ns);
                     }
                     TelemetryEvent::Gauge { name, value } => {
-                        let mut g = gauges_clone);
+                        let mut g = gauges_clone.lock();
                         let gauge = g.entry(name).or_insert_with(|| Gauge::new(0.0));
                         gauge.set(value);
                     }
@@ -366,66 +374,77 @@ impl TelemetryAggregator {
             histograms,
             gauges,
             sender: tx,
+            dropped_events,
             _handle: handle,
         }
     }
 
     #[inline]
     pub fn counter_inc(&self, name: &str) {
-        let _ = self.sender.send(TelemetryEvent::Counter {
+        if self.sender.send(TelemetryEvent::Counter {
             name: name.to_string(),
             count: 1,
             bytes: 0,
-        });
+        }).is_err() {
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     #[inline]
     pub fn counter_add(&self, name: &str, count: u64, bytes: u64) {
-        let _ = self.sender.send(TelemetryEvent::Counter {
+        if self.sender.send(TelemetryEvent::Counter {
             name: name.to_string(),
             count,
             bytes,
-        });
+        }).is_err() {
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     #[inline]
     pub fn histogram_record(&self, name: &str, duration: Duration) {
-        let _ = self.sender.send(TelemetryEvent::Histogram {
+        if self.sender.send(TelemetryEvent::Histogram {
             name: name.to_string(),
             duration_ns: duration.as_nanos() as u64,
-        });
+        }).is_err() {
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     #[inline]
     pub fn histogram_record_ns(&self, name: &str, ns: u64) {
-        let _ = self.sender.send(TelemetryEvent::Histogram {
+        if self.sender.send(TelemetryEvent::Histogram {
             name: name.to_string(),
             duration_ns: ns,
-        });
+        }).is_err() {
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     #[inline]
     pub fn gauge_set(&self, name: &str, value: f64) {
-        let _ = self.sender.send(TelemetryEvent::Gauge {
+        if self.sender.send(TelemetryEvent::Gauge {
             name: name.to_string(),
             value,
-        });
+        }).is_err() {
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
-        let counters = self.counters);
+        let counters = self.counters.lock();
         let counter_snap: HashMap<String, (u64, u64)> =
-            counters.iter().map(|(k, v)| (k.clone(), v.get())));
+            counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
-        let histograms = self.histograms);
+        let histograms = self.histograms.lock();
         let histogram_snap: HashMap<String, HistogramStats> = histograms
             .iter()
             .map(|(k, v)| (k.clone(), v.stats()))
-            );
+            .collect();
 
-        let gauges = self.gauges);
+        let gauges = self.gauges.lock();
         let gauge_snap: HashMap<String, f64> =
-            gauges.iter().map(|(k, v)| (k.clone(), v.get())));
+            gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
         TelemetrySnapshot {
             counters: counter_snap,
@@ -437,19 +456,19 @@ impl TelemetryAggregator {
     /// Export with extended histogram stats for OTel metrics bridge.
     /// Returns TelemetryExport with p50-p99.9 percentiles.
     pub fn export(&self) -> TelemetryExport {
-        let counters = self.counters);
+        let counters = self.counters.lock();
         let counter_snap: HashMap<String, (u64, u64)> =
-            counters.iter().map(|(k, v)| (k.clone(), v.get())));
+            counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
-        let histograms = self.histograms);
+        let histograms = self.histograms.lock();
         let histogram_snap: HashMap<String, ExtendedHistogramStats> = histograms
             .iter()
             .map(|(k, v)| (k.clone(), v.extended_stats()))
-            );
+            .collect();
 
-        let gauges = self.gauges);
+        let gauges = self.gauges.lock();
         let gauge_snap: HashMap<String, f64> =
-            gauges.iter().map(|(k, v)| (k.clone(), v.get())));
+            gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
         TelemetryExport {
             counters: counter_snap,
@@ -459,6 +478,7 @@ impl TelemetryAggregator {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
+            dropped_events: self.dropped_events.load(Ordering::Relaxed),
         }
     }
 }
@@ -487,6 +507,8 @@ pub struct TelemetryExport {
     pub gauges: HashMap<String, f64>,
     /// Export timestamp in milliseconds since epoch
     pub timestamp_ms: u64,
+    /// MPSC channel overflow count — events dropped when bounded channel is full
+    pub dropped_events: u64,
 }
 
 // ISSUE-064: #[pyclass(unsendable)] is REQUIRED here because:
@@ -536,7 +558,7 @@ impl PyTelemetryAggregator {
 
     /// Snapshot with standard histogram stats (p50/p95/p99).
     fn snapshot(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
-        let snap = self.inner);
+        let snap = self.inner.snapshot();
         let mut result = HashMap::new();
 
         for (name, (count, bytes)) in snap.counters {
@@ -570,7 +592,7 @@ impl PyTelemetryAggregator {
     /// Export with extended histogram stats for OTel metrics bridge (p50-p99.9).
     /// Returns dict with keys: "counters", "histograms", "gauges", "timestamp_ms".
     fn export(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
-        let exp = self.inner);
+        let exp = self.inner.export();
         let mut result = HashMap::new();
 
         // Counters: name → (count, bytes)
@@ -624,6 +646,12 @@ impl PyTelemetryAggregator {
             exp.timestamp_ms.into_pyobject(py).unwrap().into(),
         );
 
+        // MPSC overflow count
+        result.insert(
+            "dropped_events".into(),
+            exp.dropped_events.into_pyobject(py).unwrap().into(),
+        );
+
         result
     }
 }
@@ -633,9 +661,120 @@ fn create_telemetry_aggregator() -> PyTelemetryAggregator {
     PyTelemetryAggregator::new()
 }
 
+/// Global aggregator for module-level counter/histogram creation.
+/// Uses same pattern as telemetry_snapshot() — lazy singleton.
+fn get_global_agg() -> &'static TelemetryAggregator {
+    use std::sync::LazyLock;
+    static AGG: LazyLock<TelemetryAggregator, fn() -> TelemetryAggregator> =
+        LazyLock::new(TelemetryAggregator::new);
+    &AGG
+}
+
+/// Lightweight atomic counter wrapper for Python.
+/// 
+/// API: counter.inc(), counter.add(count, bytes), counter.get() -> (count, bytes)
+/// Lock-free via MPSC channel to background reducer thread.
+#[pyclass]
+struct PyCounter {
+    name: String,
+}
+
+#[pymethods]
+impl PyCounter {
+    #[new]
+    fn new(name: String) -> Self {
+        Self { name }
+    }
+
+    /// Increment counter by 1 (lock-free via MPSC).
+    fn inc(&self) {
+        get_global_agg().counter_inc(&self.name);
+    }
+
+    /// Add arbitrary count and bytes (lock-free via MPSC).
+    fn add(&self, count: u64, bytes: u64) {
+        get_global_agg().counter_add(&self.name, count, bytes);
+    }
+
+    /// Get current (count, bytes) snapshot.
+    fn get(&self, py: Python<'_>) -> Py<PyAny> {
+        let snap = get_global_agg().snapshot();
+        if let Some((c, b)) = snap.counters.get(&self.name) {
+            (*c, *b).into_pyobject(py).unwrap().into()
+        } else {
+            (0u64, 0u64).into_pyobject(py).unwrap().into()
+        }
+    }
+}
+
+/// Lightweight HDR histogram wrapper for Python.
+/// 
+/// API: histogram.record(duration_ms), histogram.record_ns(ns), histogram.stats()
+/// Lock-free via MPSC channel to background reducer thread.
+#[pyclass]
+struct PyHistogram {
+    name: String,
+}
+
+#[pymethods]
+impl PyHistogram {
+    #[new]
+    fn new(name: String) -> Self {
+        Self { name }
+    }
+
+    /// Record duration in milliseconds.
+    fn record(&self, duration_ms: f64) {
+        get_global_agg().histogram_record(&self.name, Duration::from_secs_f64(duration_ms / 1000.0));
+    }
+
+    /// Record duration in nanoseconds (higher precision).
+    fn record_ns(&self, ns: u64) {
+        get_global_agg().histogram_record_ns(&self.name, ns);
+    }
+
+    /// Get histogram stats (count, mean_ns, p50, p95, p99).
+    fn stats(&self, py: Python<'_>) -> Py<PyAny> {
+        let snap = get_global_agg().snapshot();
+        if let Some(stats) = snap.histograms.get(&self.name) {
+            let dict = pyo3::types::PyDict::new(py);
+            dict.set_item("count", stats.count).unwrap();
+            dict.set_item("mean_ns", stats.mean_ns).unwrap();
+            dict.set_item("p50_ns", stats.p50_ns).unwrap();
+            dict.set_item("p95_ns", stats.p95_ns).unwrap();
+            dict.set_item("p99_ns", stats.p99_ns).unwrap();
+            dict.into()
+        } else {
+            let dict = pyo3::types::PyDict::new(py);
+            dict.set_item("count", 0u64).unwrap();
+            dict.set_item("mean_ns", 0u64).unwrap();
+            dict.set_item("p50_ns", 0u64).unwrap();
+            dict.set_item("p95_ns", 0u64).unwrap();
+            dict.set_item("p99_ns", 0u64).unwrap();
+            dict.into()
+        }
+    }
+}
+
+/// Create a named atomic counter (lock-free via MPSC).
+#[pyfunction]
+fn create_counter(name: String) -> PyCounter {
+    PyCounter::new(name)
+}
+
+/// Create a named HDR histogram (lock-free via MPSC).
+#[pyfunction]
+fn create_histogram(name: String) -> PyHistogram {
+    PyHistogram::new(name)
+}
+
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_telemetry_aggregator))?;
+    m.add_function(wrap_pyfunction!(create_counter))?;
+    m.add_function(wrap_pyfunction!(create_histogram))?;
     m.add_class::<PyTelemetryAggregator>()?;
+    m.add_class::<PyCounter>()?;
+    m.add_class::<PyHistogram>()?;
     Ok(())
 }
 

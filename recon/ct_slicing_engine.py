@@ -58,7 +58,7 @@ class CTProvider(Enum):
     VIRUSTOTAL = "virustotal.com"
 
 
-@dataclass(frozen=True, gc=False, slots=True)
+@dataclass(frozen=True, slots=True)
 class CTEntry:
     """Certificate Transparency log entry.
 
@@ -87,7 +87,7 @@ class CTEntry:
     observed_at: float = field(default_factory=time.time)
 
 
-@dataclass(frozen=True, gc=False, slots=True)
+@dataclass(frozen=True, slots=True)
 class CTSlicingResult:
     """Result of CT slicing operation.
 
@@ -116,7 +116,7 @@ class CTSlicingResult:
     errors: list[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True, gc=False, slots=True)
+@dataclass(frozen=True, slots=True)
 class CTStats:
     """Real-time CT engine statistics."""
 

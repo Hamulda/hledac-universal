@@ -396,7 +396,7 @@ class OpsECCoordinator(UniversalCoordinator):
                 ],
                 "high_risk": sum(1 for a in alerts if a.severity.value in ("high", "critical")),
             }
-        except ImportError, ModuleNotFoundError:
+        except (ImportError, ModuleNotFoundError):
             logger.warning("DataLeakHunter not available")
             return {"success": False, "error": "DataLeakHunter not available"}
         except Exception as e:
@@ -485,7 +485,7 @@ class OpsECCoordinator(UniversalCoordinator):
                 "duration": result.duration,
                 "proxy_used": result.proxy_used,
             }
-        except ImportError, ModuleNotFoundError:
+        except (ImportError, ModuleNotFoundError):
             logger.warning("StealthWebScraper not available")
             return {"success": False, "error": "StealthWebScraper not available"}
         except Exception as e:
@@ -728,7 +728,7 @@ class OpsECCoordinator(UniversalCoordinator):
                 "best_snapshot": result.best_snapshot.snapshot_id if result.best_snapshot else None,
                 "processing_time": result.processing_time,
             }
-        except ImportError, ModuleNotFoundError:
+        except (ImportError, ModuleNotFoundError):
             logger.warning("ArchiveResurrector not available")
             return {"success": False, "error": "ArchiveResurrector not available"}
         except Exception as e:

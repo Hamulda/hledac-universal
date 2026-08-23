@@ -186,7 +186,7 @@ def canonical_source_type(value: str | SourceType | None) -> str:
         return ""
     try:
         raw = value.value if isinstance(value, SourceType) else str(value)
-    except AttributeError, TypeError:
+    except (AttributeError, TypeError):
         return ""
     if not raw:
         return ""

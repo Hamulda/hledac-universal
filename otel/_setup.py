@@ -57,7 +57,7 @@ class TelemetryConfig(Struct, frozen=True):
             kind = "stdout"
         try:
             ratio = float(os.environ.get("HLEDAC_OTEL_SAMPLE_RATIO", "0.05"))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             ratio = 1.0
         ratio = max(0.0, min(1.0, ratio))
         return cls(
@@ -192,7 +192,7 @@ def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
         # TEL-01: slow_span_threshold from env (default 100ms)
         try:
             slow_threshold = float(os.environ.get("HLEDAC_OTEL_SLOW_SPAN_MS", "100.0"))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             slow_threshold = 100.0
 
         # TEL-01: configurable skip_prefixes from env (default: fetch.,http.,db.,lmdb.,cache.,duckdb.)
@@ -266,13 +266,13 @@ def _reset_otel_globals() -> None:
         from opentelemetry.trace import _TRACER_PROVIDER_SET_ONCE
 
         _TRACER_PROVIDER_SET_ONCE._done = False
-    except ImportError, AttributeError:  # noqa: BLE001
+    except (ImportError, AttributeError):  # noqa: BLE001
         pass
     try:
         from opentelemetry import trace
 
         trace._TRACER_PROVIDER = None
-    except ImportError, AttributeError:  # noqa: BLE001
+    except (ImportError, AttributeError):  # noqa: BLE001
         pass
 
 
@@ -364,7 +364,7 @@ def shutdown_telemetry(timeout_ms: int = 5000) -> None:
             from otel._instrumentation import _reset_tracer_cache
 
             _reset_tracer_cache()
-        except ImportError, Exception:  # noqa: BLE001
+        except (ImportError, Exception):  # noqa: BLE001
             pass
         try:
             if _PROCESSOR is not None:

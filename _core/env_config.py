@@ -96,7 +96,7 @@ class _CacheAccessor:
             return default
         try:
             return int(val)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return default
 
     def get_float(self, name: str, default: float = 0.0) -> float:
@@ -106,7 +106,7 @@ class _CacheAccessor:
             return default
         try:
             return float(val)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return default
 
     def get_str(self, name: str, default: str = "") -> str:
@@ -178,11 +178,11 @@ def _parse_memory_string(s: str) -> int:
             num_str = s[: -len(suffix)].strip()
             try:
                 return int(float(num_str) * mult)
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 return 0
     try:
         return int(s)
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return 0
 
 

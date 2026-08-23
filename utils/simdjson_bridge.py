@@ -228,7 +228,7 @@ def _resolve_orjson_pointer(data: object, pointer: str) -> object:
             try:
                 idx = int(unescaped)
                 current = current[idx]
-            except ValueError, IndexError:
+            except (ValueError, IndexError):
                 return None
         else:
             return None

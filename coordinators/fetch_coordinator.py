@@ -761,7 +761,7 @@ def _try_load_aimd_controller(initial_window: float) -> AIMDWindow | PyAIMDContr
     if PyAIMDController is not None:
         try:
             return PyAIMDController(initial_window=initial_window)
-        except TypeError, OSError:  # noqa: BLE001
+        except (TypeError, OSError):  # noqa: BLE001
             pass  # Fall through to Python fallback
     return AIMDWindow(initial=initial_window)
 
@@ -1499,7 +1499,7 @@ class FetchCoordinator(UniversalCoordinator):
         )
         # B4: DedupBloom — fast lock-free bloom filter for URL queue dedup (10× faster than RotatingBloomFilter)
         # This is a FAST SKIP layer before the canonical RotatingBloomFilter (_processed_urls)
-        self._url_bloom: DedupBloom | None = get_dedup_bloom("/tmp/hledac/dedup_bloom")
+        self._url_bloom: DedupBloom | None = get_dedup_bloom()
         self._urls_fetched_count: int = 0
         self._stop_reason: str | None = None
         # E4 FIX: In-flight response body memory tracking for M1 8GB.
@@ -1606,6 +1606,8 @@ class FetchCoordinator(UniversalCoordinator):
         # _aimd_semaphore: asyncio.Semaphore for slot coordination (stays in Python).
         # Window state is in Rust; Python only reads window for semaphore sizing.
         self._aimd_semaphore: asyncio.Semaphore = asyncio.Semaphore(_aimd_initial)
+        # H8 FIX: Lock to protect semaphore _value reads/writes from race conditions
+        self._aimd_state_lock: asyncio.Lock = asyncio.Lock()
         if _blitz:
             logger.info("[BLITZ-13] Blitz fetch mode: AIMD window initialized at %d (skip ramp-up)", _aimd_initial)
         self._per_host_limit = 4
@@ -1699,15 +1701,17 @@ class FetchCoordinator(UniversalCoordinator):
             new_window = self._aimd.blitz_boost(_target)
         else:
             new_window = await self._aimd.blitz_boost(_target)
-        # Sync semaphore to new window
-        # P4-3 FIX: Only increase permits when window grows. When window shrinks,
-        # do nothing - releasing permits makes backpressure worse by allowing MORE
-        # concurrent operations. The semaphore naturally limits new acquires.
-        _diff = int(new_window) - self._aimd_semaphore._value
-        if _diff > 0:
-            for _ in range(_diff):
-                self._aimd_semaphore.release()
-        # P4-3 FIX: Removed elif _diff < 0 branch - don't release permits when shrinking
+        # H8 FIX: Protect semaphore _value read-modify-write with lock to prevent race conditions
+        async with self._aimd_state_lock:
+            # Sync semaphore to new window
+            # P4-3 FIX: Only increase permits when window grows. When window shrinks,
+            # do nothing - releasing permits makes backpressure worse by allowing MORE
+            # concurrent operations. The semaphore naturally limits new acquires.
+            _diff = int(new_window) - self._aimd_semaphore._value
+            if _diff > 0:
+                for _ in range(_diff):
+                    self._aimd_semaphore.release()
+            # P4-3 FIX: Removed elif _diff < 0 branch - don't release permits when shrinking
         self._telemetry["aimd_concurrency"] = new_window
         self._blitz_mode = True
         logger.info("[BLITZ-13] blitz_boost: window → %d (target=%d)", int(new_window), int(_target))
@@ -1819,7 +1823,7 @@ class FetchCoordinator(UniversalCoordinator):
             from hledac.universal.transport import circuit_breaker as cb
 
             cb.domain_breaker_record_success(domain)
-        except ImportError, AttributeError:  # noqa: BLE001 — best-effort; circuit_breaker telemetry; non-critical
+        except (ImportError, AttributeError):  # noqa: BLE001 — best-effort; circuit_breaker telemetry; non-critical
             pass
 
     def _record_failure(self, domain: str, is_timeout: bool = False, failure_kind: str = "") -> None:
@@ -2061,7 +2065,7 @@ class FetchCoordinator(UniversalCoordinator):
             if ip.is_unspecified:
                 return False
             return not ip.is_loopback
-        except ValueError, TypeError:  # noqa: BLE001 — best-effort; ip_address parse failure; returns False (private check)
+        except (ValueError, TypeError):  # noqa: BLE001 — best-effort; ip_address parse failure; returns False (private check)
             return False
 
     async def _validate_fetch_target(self, url: str) -> tuple[bool, dict[str, Any]]:
@@ -2209,8 +2213,8 @@ class FetchCoordinator(UniversalCoordinator):
                 bp_result = self._concurrency_provider()
                 if bp_result is not None:
                     bp_clearing, _, bp_uma_state, _ = bp_result
-            except TypeError, ValueError, KeyError:  # noqa: BLE001
-                pass
+             except (TypeError, ValueError, KeyError):  # noqa: BLE001
+                 pass
         return bp_clearing, bp_uma_state
 
     async def _apply_governor_backpressure(
@@ -2240,7 +2244,7 @@ class FetchCoordinator(UniversalCoordinator):
             self._telemetry["backpressure_clamp_events"] += 1
         return current_window
 
-    def _sync_semaphore_to_window(self, current_window: float) -> None:
+    async def _sync_semaphore_to_window(self, current_window: float) -> None:
         """Sync semaphore permits to match current window.
 
         P4-3 FIX: Only increase permits when window grows. When window shrinks,
@@ -2251,16 +2255,18 @@ class FetchCoordinator(UniversalCoordinator):
         complete and release their permits. New acquires wait when window is
         smaller than the semaphore's current permits.
         """
-        if current_window == self._aimd_semaphore._value:
-            return
-        diff = int(current_window) - self._aimd_semaphore._value
-        if diff > 0:
-            for _ in range(diff):
-                self._aimd_semaphore.release()
-        # P4-3 FIX: Removed elif diff < 0 branch. When window shrinks,
-        # we must NOT release permits - that would make backpressure worse.
-        # The semaphore value stays higher, naturally limiting new acquires
-        # until running tasks complete and release normally.
+        # H8 FIX: Protect semaphore _value read-modify-write with lock to prevent race conditions
+        async with self._aimd_state_lock:
+            if current_window == self._aimd_semaphore._value:
+                return
+            diff = int(current_window) - self._aimd_semaphore._value
+            if diff > 0:
+                for _ in range(diff):
+                    self._aimd_semaphore.release()
+            # P4-3 FIX: Removed elif diff < 0 branch. When window shrinks,
+            # we must NOT release permits - that would make backpressure worse.
+            # The semaphore value stays higher, naturally limiting new acquires
+            # until running tasks complete and release normally.
 
     async def _acquire_python_slot(self, bp_clearing: float | None) -> float:
         """Acquire slot using Python AIMDWindow + semaphore."""
@@ -2268,7 +2274,7 @@ class FetchCoordinator(UniversalCoordinator):
             await self._aimd.set_window(bp_clearing)
             self._telemetry["backpressure_clamp_events"] += 1
         current_window = self._aimd.window
-        self._sync_semaphore_to_window(current_window)
+        await self._sync_semaphore_to_window(current_window)
         await self._aimd_semaphore.acquire()
         return current_window
 
@@ -3138,7 +3144,7 @@ class FetchCoordinator(UniversalCoordinator):
             _path = _fast_url_path(url)
             if not _host:
                 return (True, None)
-        except ValueError, TypeError:  # noqa: BLE001 — best-effort; URL parse failure; skip robots check
+        except (ValueError, TypeError):  # noqa: BLE001 — best-effort; URL parse failure; skip robots check
             return (True, None)
         try:
             _doc = await _rp.fetch_robots(url)
@@ -3179,7 +3185,7 @@ class FetchCoordinator(UniversalCoordinator):
             _path = _fast_url_path(url)
             if not _host:
                 return (True, None, 0.0)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return (True, None, 0.0)
         _doc = domain_robots.get(_host.lower())
         if _doc is None:
@@ -3252,8 +3258,8 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 _result = self._concurrency_provider()
                 self._batch_cp_result = _result if _result is not None else _CP_RETURNED_NONE
-            except TypeError, ValueError:  # noqa: BLE001
-                pass
+             except (TypeError, ValueError):  # noqa: BLE001
+                 pass
 
         def _extract_raw_hosts() -> set[str]:
             """Extract unique hosts from raw batch (sync, fast — runs in thread pool)."""
@@ -3276,7 +3282,7 @@ class FetchCoordinator(UniversalCoordinator):
                     hostname = url[host_start:host_end]
                     if hostname:
                         hosts.add(hostname.lower())
-                except ValueError, TypeError:  # noqa: BLE001
+                except (ValueError, TypeError):  # noqa: BLE001
                     continue
             return hosts
 
@@ -3430,7 +3436,7 @@ class FetchCoordinator(UniversalCoordinator):
                             host_end = i
                             break
                     _domain = _url[host_start:host_end]
-                except ValueError, TypeError:
+                except (ValueError, TypeError):
                     continue
                 if _domain:
                     unique_domains.add(_domain.lower())
@@ -3973,7 +3979,7 @@ class FetchCoordinator(UniversalCoordinator):
 
                 if not gov.can_afford_sync({"ram_mb": 15}, Priority.CRITICAL):
                     return "cannot_afford"
-        except TypeError, ValueError, KeyError:  # noqa: BLE001
+        except (TypeError, ValueError, KeyError):  # noqa: BLE001
             pass
         return None
 
@@ -3984,7 +3990,7 @@ class FetchCoordinator(UniversalCoordinator):
 
             _quinn_http_version = http_version_for_curl_cffi(url)
             return _quinn_http_version is not None
-        except ImportError, Exception:  # noqa: BLE001
+        except (ImportError, Exception):  # noqa: BLE001
             return False
 
     async def _execute_dns_circuit_phase(
@@ -4114,7 +4120,7 @@ class FetchCoordinator(UniversalCoordinator):
                 _hostname = parsed.host
                 if _hostname:
                     _resolve = {_hostname: _resolved_ips[0]}
-            except ValueError, TypeError:  # noqa: BLE001
+            except (ValueError, TypeError):  # noqa: BLE001
                 pass
         elif not _is_darknet_url and not _resolved_ips:
             _retry_host = host_name or parsed.host
@@ -4151,7 +4157,7 @@ class FetchCoordinator(UniversalCoordinator):
                                 break
                         else:
                             _resolve = {_retry_host: _retry_ips[0]}
-                except TimeoutError, OSError:  # noqa: BLE001
+                except (TimeoutError, OSError):  # noqa: BLE001
                     pass
         return _resolve
 
@@ -4571,6 +4577,16 @@ class FetchCoordinator(UniversalCoordinator):
         self._frontier.clear()
         self._processed_urls = _create_dedup_strategy()
         self._cover_count = 0
+        # Fix 5: Persist DedupBloom on shutdown — LZ4-compressed mmap via Rust save().
+        # Note: weakref.finalize in DedupBloom.__init__ also handles SIGINT/SIGTERM,
+        # but explicit save() here ensures persistence even if finalizer didn't run.
+        try:
+            if self._url_bloom is not None:
+                path = self._url_bloom.save()
+                if path:
+                    logger.debug("DedupBloom persisted at shutdown: %s", path)
+        except Exception:  # noqa: BLE001 — best-effort; persistence failure is non-fatal
+            pass
         # META-001: Clear CrossSprintGate TTL cache on shutdown
         try:
             if self._cross_sprint_gate is not None:
@@ -4698,7 +4714,7 @@ class FetchCoordinator(UniversalCoordinator):
             return
         try:
             _ = _fast_url_host(url)
-        except ValueError, TypeError:  # noqa: BLE001 — best-effort; httpx.URL parse failure; non-critical
+        except (ValueError, TypeError):  # noqa: BLE001 — best-effort; httpx.URL parse failure; non-critical
             return
         transport_lower = transport.lower()
         if transport_lower == "tor":

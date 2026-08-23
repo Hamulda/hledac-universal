@@ -178,7 +178,7 @@ class StorageConfig(Struct, frozen=True, kw_only=True):
         """Parse env var as int, return default on failure."""
         try:
             return int(os.environ.get(name, str(default)))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return default
 
     def is_tmp_acceptable(self) -> bool:

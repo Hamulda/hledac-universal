@@ -1,0 +1,28 @@
+{
+  "name": "grep_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "grep",
+      "description": "Search file contents using regex pattern",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string", "description": "Regex pattern to search" },
+          "path": { "type": "string", "description": "Directory or file to search in" },
+          "include": { "type": "string", "description": "File glob filter (e.g. *.py)" },
+          "context_after": { "type": "number", "description": "Lines after match" },
+          "context_before": { "type": "number", "description": "Lines before match" },
+          "limit": { "type": "number", "description": "Max number of matches" }
+        },
+        "required": ["pattern", "path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "grep",
+        "args": ["-rn", "${pattern}", "${path}", "--include=${include:-*}"]
+      }
+    }
+  ]
+}

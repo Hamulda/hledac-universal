@@ -70,7 +70,8 @@ def _get_mlx_nn() -> Any:  # type: ignore[type-arg]
     return _mlx_nn_mod
 
 
-_MLX_NN_AVAILABLE: bool = _get_mlx_nn() is not None
+# P0-01 FIX: Don't call _get_mlx_nn() at module level — mlx.nn import crashes M1
+_MLX_NN_AVAILABLE: bool = False
 
 
 class DistillationExample(Struct):

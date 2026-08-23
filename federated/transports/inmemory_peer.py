@@ -263,7 +263,7 @@ def _normalize_inmem_finding(
         return None
     try:
         confidence = float(raw.get("confidence", 0.5) or 0.5)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         confidence = 0.5
     confidence = max(0.0, min(1.0, confidence))
     finding: dict[str, Any] = {

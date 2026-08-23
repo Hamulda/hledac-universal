@@ -472,7 +472,7 @@ register(
 )
 register(
     FlagSpec(
-        name="HLEDAC_DEEP_RESEARCH",
+        name="HLEDAC_ENABLE_DEEP_RESEARCH",
         group="brain",
         implies=("HLEDAC_ENABLE_LLM",),
         min_ram_mb=500,
@@ -594,7 +594,7 @@ register(
 )
 register(
     FlagSpec(
-        name="HLEDAC_EXPERIMENTAL_NEURO_CRYPTO",
+        name="HLEDAC_ENABLE_NEURO_CRYPTO",
         group="stealth",
         min_ram_mb=0,
         description="Experimental neuro-cryptographic sidecar (research, not for prod).",
@@ -620,11 +620,11 @@ def is_flag_active(name: str) -> bool:
     """
     try:
         raw = os.environ.get(name, "0")
-    except AttributeError, TypeError:
+        except (AttributeError, TypeError):
         return False
     try:
         return raw.strip().lower() in _TRUTHY
-    except AttributeError, TypeError:
+        except (AttributeError, TypeError):
         return False
 
 
@@ -642,11 +642,11 @@ def is_enabled(name: str, default: str = "0") -> bool:
     """
     try:
         raw = os.environ.get(name, default)
-    except AttributeError, TypeError:
+        except (AttributeError, TypeError):
         return False
     try:
         return raw.strip().lower() in _TRUTHY
-    except AttributeError, TypeError:
+        except (AttributeError, TypeError):
         return False
 
 

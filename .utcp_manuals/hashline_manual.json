@@ -1,0 +1,42 @@
+{
+  "name": "hashline_tools",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "read_hashed_file",
+      "description": "Přečte soubor s 4-znakovými hashi na řádek pro bezpečné adresování změn.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "file_path": { "type": "string", "description": "Cesta k souboru" }
+        },
+        "required": ["file_path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "python3",
+        "args": [".utcp_tools/hashline.py", "read", "${file_path}"]
+      }
+    },
+    {
+      "name": "patch_hashed_file",
+      "description": "Nahradí blok řádků mezi počátečním a koncovým hashem novým obsahem.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "file_path": { "type": "string", "description": "Cesta k souboru" },
+          "start_hash": { "type": "string", "description": "Hash počátečního řádku" },
+          "end_hash": { "type": "string", "description": "Hash koncového řádku" },
+          "new_content": { "type": "string", "description": "Nový kód nahrazující označený blok" }
+        },
+        "required": ["file_path", "start_hash", "end_hash", "new_content"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "python3",
+        "args": [".utcp_tools/hashline.py", "patch", "${file_path}", "${start_hash}", "${end_hash}", "${new_content}"]
+      }
+    }
+  ]
+}

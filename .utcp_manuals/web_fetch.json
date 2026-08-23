@@ -1,0 +1,26 @@
+{
+  "name": "web_fetch_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "web_fetch",
+      "description": "Fetch URL content with format conversion (markdown/text/html)",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL to fetch" },
+          "format": { "type": "string", "description": "Output format: markdown, text, or html", "enum": ["markdown", "text", "html"] },
+          "timeout": { "type": "number", "description": "Timeout in seconds (default 30, max 120)" }
+        },
+        "required": ["url"]
+      },
+      "tool_call_template": {
+        "call_template_type": "http",
+        "url": "${url}",
+        "http_method": "GET",
+        "headers": { "User-Agent": "UTCP-Agent/1.0 (macOS-arm64)" }
+      }
+    }
+  ]
+}

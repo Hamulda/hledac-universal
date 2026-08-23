@@ -765,7 +765,7 @@ class HttpTransport:
             try:
                 if hasattr(resp, "url") and resp.url:
                     final_url = str(resp.url)
-            except ValueError, AttributeError:
+            except (ValueError, AttributeError):
                 pass
             resp_headers = dict(resp.headers) if hasattr(resp, "headers") else {}
             return HttpResult(

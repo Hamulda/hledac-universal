@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import msgspec
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal._core.env_config import ENV
 from hledac.universal._core.sync_bridge import stream_via_queue
 from hledac.universal.brain._batch.batch_processor import BatchConfig, BatchItem, BatchProcessor, BatchStats
 from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
@@ -251,8 +252,11 @@ sanitize_for_llm = lazy(".prompt_injection_validator.sanitize_for_llm")
 import re as _re_pi
 
 _mx_resolver = lazy("mlx.core")
-MLX_AVAILABLE = _mx_resolver() is not None
-mx = _mx_resolver() if MLX_AVAILABLE else None
+# P0-01 FIX: Don't call _mx_resolver() at module level — mlx.core import crashes M1
+# Use is_mlx_available() from mlx_interface for runtime checks
+MLX_AVAILABLE = False
+mx = None
+from hledac.universal.brain.mlx_interface import is_mlx_available
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024
 from hledac.universal.utils.asyncx import parallel
 
@@ -334,11 +338,11 @@ def _get_hermes_timeout_s() -> float:
         Falls back to HERMES_TIMEOUT_DEFAULT_S on invalid/missing env.
     """
     try:
-        raw = float(os.environ.get("HLEDAC_HERMES_TIMEOUT_S", HERMES_TIMEOUT_DEFAULT_S))
+        raw = ENV.get_float("HLEDAC_HERMES_TIMEOUT_S", default=HERMES_TIMEOUT_DEFAULT_S)
         if raw <= 0:
             return HERMES_TIMEOUT_DEFAULT_S
         return max(HERMES_TIMEOUT_MIN_S, min(raw, HERMES_TIMEOUT_MAX_S))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return HERMES_TIMEOUT_DEFAULT_S
 
 
@@ -353,7 +357,7 @@ except ImportError:
     DarkQuerySignature = None
     HypothesisSignature = None
     _DSPY_AVAILABLE = False
-HLEDAC_ENABLE_DSPY = os.environ.get("HLEDAC_ENABLE_DSPY", "0") == "1" and _DSPY_AVAILABLE
+HLEDAC_ENABLE_DSPY = ENV.get_bool("HLEDAC_ENABLE_DSPY") and _DSPY_AVAILABLE
 
 # SWARM-010: Use FeatureFlags for MLX prewarm
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
@@ -612,16 +616,16 @@ class DeepHermes3Engine:
         self._kv_cache_enabled = False
         self._prompt_cache = None
         self._max_kv_size = 8192
-        self._kv_bits = int(os.getenv("GHOST_KV_BITS", "4"))
-        self._paged_kv_cache = os.getenv("HLEDAC_PAGED_KV_CACHE", "0") == "1"
+        self._kv_bits = ENV.get_int("GHOST_KV_BITS", default=4)
+        self._paged_kv_cache = ENV.get_bool("HLEDAC_PAGED_KV_CACHE")
         # Paged KV keep: support both new HLEDAC_PAGED_KV_KEEP_TOKENS and legacy HLEDAC_PAGED_KV_KEEP
-        _raw_keep = os.getenv("HLEDAC_PAGED_KV_KEEP_TOKENS", "") or os.getenv("HLEDAC_PAGED_KV_KEEP", "")
+        _raw_keep = ENV.get_str("HLEDAC_PAGED_KV_KEEP_TOKENS") or ENV.get_str("HLEDAC_PAGED_KV_KEEP")
         self._paged_kv_keep: int
         try:
             self._paged_kv_keep = max(0, int(_raw_keep)) if _raw_keep.strip() else 64
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             self._paged_kv_keep = 64
-        self._force_kv_quantize = os.getenv("HLEDAC_KV_QUANTIZE", "0") == "1"
+        self._force_kv_quantize = ENV.get_bool("HLEDAC_KV_QUANTIZE")
         self._outlines_model = None
         self._outlines_generators = {}
         self._draft_model_obj = None
@@ -640,17 +644,17 @@ class DeepHermes3Engine:
         self._last_clear_at: float | None = None
         self._model_ever_loaded: bool = False
         self._system_prompt = "You are a helpful research assistant."
-        _raw_max_kv = os.environ.get("HLEDAC_KV_CACHE_POOL_MAXSIZE", "")
+        _raw_max_kv = ENV.get_str("HLEDAC_KV_CACHE_POOL_MAXSIZE")
         try:
             _kv_max = int(_raw_max_kv) if _raw_max_kv.strip() else None
             self._kv_cache_pool_maxsize: int = max(1, _kv_max) if _kv_max is not None else 4
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             self._kv_cache_pool_maxsize: int = 4
-        _raw_mem = os.environ.get("HLEDAC_KV_CACHE_POOL_MEMORY_MB", "")
+        _raw_mem = ENV.get_str("HLEDAC_KV_CACHE_POOL_MEMORY_MB")
         try:
             _mem_mb = int(_raw_mem) if _raw_mem.strip() else None
             self._kv_cache_pool_memory_mb: int = max(32, _mem_mb) if _mem_mb is not None else 256
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             self._kv_cache_pool_memory_mb: int = 256
         self._kv_cache_pool: SlidingWindowKVCache[str, tuple[Any, float, int]] = SlidingWindowKVCache(
             max_size=self._kv_cache_pool_maxsize,
@@ -668,17 +672,17 @@ class DeepHermes3Engine:
             "pool_evictions_memory": 0,
         }
         self._key_locks: PyCacheDict[str, threading.Lock] = PyCacheDict(1024, 300.0)
-        _raw_session_mem = os.getenv("HLEDAC_SESSION_CACHE_MEMORY_MB", "")
+        _raw_session_mem = ENV.get_str("HLEDAC_SESSION_CACHE_MEMORY_MB")
         try:
             _session_mem_mb = int(_raw_session_mem) if _raw_session_mem.strip() else None
             self._session_cache_memory_mb: int = max(32, _session_mem_mb) if _session_mem_mb is not None else 128
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             self._session_cache_memory_mb: int = 128
-        _raw_session_max = os.getenv("HLEDAC_SESSION_CACHE_MAXSIZE", "")
+        _raw_session_max = ENV.get_str("HLEDAC_SESSION_CACHE_MAXSIZE")
         try:
             _session_max = int(_raw_session_max) if _raw_session_max.strip() else None
             self._session_cache_maxsize: int = max(1, _session_max) if _session_max is not None else 8
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             self._session_cache_maxsize: int = 8
         self._session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = LRUCache(
             max_size=self._session_cache_maxsize
@@ -690,14 +694,14 @@ class DeepHermes3Engine:
             "session_cache_memory_mb": self._session_cache_memory_mb,
             "session_cache_maxsize": self._session_cache_maxsize,
         }
-        _raw_max = os.environ.get("HLEDAC_HERMES_PREFIX_CACHE_MAXSIZE", "")
+        _raw_max = ENV.get_str("HLEDAC_HERMES_PREFIX_CACHE_MAXSIZE")
         try:
             _max = int(_raw_max) if _raw_max.strip() else None
             self._prefix_cache_maxsize: int = max(1, _max) if _max is not None else 64
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             self._prefix_cache_maxsize: int = 64
         self._prefix_cache: LRUCache[str, Any] = LRUCache(max_size=self._prefix_cache_maxsize)
-        self._idle_unload_timeout_s: float = float(os.getenv("HLEDAC_IDLE_UNLOAD_TIMEOUT_S", "1800.0"))
+        self._idle_unload_timeout_s: float = ENV.get_float("HLEDAC_IDLE_UNLOAD_TIMEOUT_S", default=1800.0)
         self._prefix_cache_stats = {
             "prefix_cache_maxsize": self._prefix_cache_maxsize,
             "prefix_cache_size": 0,
@@ -1723,7 +1727,7 @@ class DeepHermes3Engine:
         if self._model is not None and self._tokenizer is not None:
             logger.debug("[HERMES] Model already loaded, skipping cache check")
             return
-        if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
+        if ENV.get_bool("HLEDAC_HERMES_NO_CACHE"):
             logger.debug("[HERMES] HLEDAC_HERMES_NO_CACHE=1 — loading from disk")
             model, tokenizer = await asyncio.to_thread(__import__("mlx_lm").load, self.config.model_path)
             self._model = model
@@ -1741,7 +1745,7 @@ class DeepHermes3Engine:
         self._model = model
         self._tokenizer = tokenizer
         try:
-            if os.getenv("HLEDAC_HALF_PRECISION", "1") != "0":
+            if ENV.get_bool("HLEDAC_HALF_PRECISION", default=True):
                 model.set_dtype(mx.float16)  # type: ignore[union-attr]
                 logger.info("[HERMES] Model dtype set to float16 (half precision)")
         except Exception as e:
@@ -2005,7 +2009,6 @@ class DeepHermes3Engine:
 
         Memory budget: 200MB draft model + 500MB KV cache = 700MB total overhead
         """
-        import os
 
         # ── BLITZ-11: Blitz triage path ─────────────────────────────────────
         # When blitz mode is active (duration ≤ 30 min) AND triage is enabled,
@@ -2015,7 +2018,7 @@ class DeepHermes3Engine:
         try:
             from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
 
-            if _is_blitz() and os.environ.get("HLEDAC_ENABLE_BLITZ_TRIAGE", "0") == "1":
+            if _is_blitz() and ENV.get_bool("HLEDAC_ENABLE_BLITZ_TRIAGE"):
                 _blitz_triage = True
         except Exception:  # noqa: BLE001
             pass
@@ -2619,7 +2622,7 @@ class DeepHermes3Engine:
                             await safe_wait_for(
                                 asyncio.wrap_future(inference_future), timeout=60.0, label="deephermes_main_thread"
                             )
-                        except TimeoutError, RuntimeError:
+                        except (TimeoutError, RuntimeError):
                             await asyncio.to_thread(_do_generate)
                     else:
                         await asyncio.to_thread(_do_generate)
@@ -5780,7 +5783,7 @@ class DeepHermes3Engine:
             from mlx_lm.utils import make_prompt_cache
 
             mutex.acquire_mlx(model_size_mb=2000.0)
-            if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
+            if ENV.get_bool("HLEDAC_HERMES_NO_CACHE"):
                 self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
             else:
                 logger.info(f"[HERMES] Loading model from disk: {model_id}")
@@ -5837,7 +5840,7 @@ class DeepHermes3Engine:
 
     async def _compress_kv_cache(self) -> bool:
         """Apply CommVQ 2-bit quantization to KV cache (87.5% savings)."""
-        if not MLX_AVAILABLE:
+        if not is_mlx_available():
             return False
         try:
             from ..utils.sketches import commvq_quantize
@@ -5899,7 +5902,7 @@ class DeepHermes3Engine:
         Uses GHOST_HERMES_SUSTAIN=1 env flag and inspects generate_fn signature
         to add only supported kwargs.
         """
-        sustain_flag = os.getenv("GHOST_HERMES_SUSTAIN", "0")
+        sustain_flag = ENV.get_str("GHOST_HERMES_SUSTAIN")
         if sustain_flag != "1":
             return {}
         try:
@@ -5911,7 +5914,7 @@ class DeepHermes3Engine:
             has_var_keyword = False
         kwargs = {}
         if "max_kv_size" in param_names or has_var_keyword:
-            kwargs["max_kv_size"] = int(os.getenv("GHOST_KV_SIZE", "4096"))
+            kwargs["max_kv_size"] = ENV.get_int("GHOST_KV_SIZE", default=4096)
         if "kv_cache_type" in param_names:
             kwargs["kv_cache_type"] = "rotating"
         if "attention_sink_size" in param_names:
@@ -5948,7 +5951,7 @@ class DeepHermes3Engine:
         }
         for k, v in sustain_kwargs.items():
             generate_kwargs[k] = v
-        if os.getenv("GHOST_PREFIX_CACHE_EXPERIMENT", "0") == "1":
+        if ENV.get_bool("GHOST_PREFIX_CACHE_EXPERIMENT"):
             try:
                 from mlx_lm.models.cache import make_prompt_cache
 

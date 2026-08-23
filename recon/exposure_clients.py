@@ -371,7 +371,7 @@ class GitHubCodeSearchClient:
                 import compression.zstd as _zstd
 
                 return decode(_zstd.decompress(zst_path.read_bytes()))
-            except ImportError, Exception:  # noqa: BLE001
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             return decode(json_path.read_bytes())
@@ -447,7 +447,7 @@ class MalwareBazaarClient:
                 import compression.zstd as _zstd
 
                 return decode(_zstd.decompress(zst_path.read_bytes()))
-            except ImportError, Exception:  # noqa: BLE001
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             return decode(json_path.read_bytes())
@@ -529,7 +529,7 @@ class GreyNoiseClient:
                 import compression.zstd as _zstd
 
                 return decode(_zstd.decompress(zst_path.read_bytes()))
-            except ImportError, Exception:  # noqa: BLE001
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             return decode(json_path.read_bytes())

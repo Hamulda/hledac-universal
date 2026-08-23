@@ -3022,7 +3022,7 @@ class SynthesisRunner:
 
                 try:
                     processor = xgr.contrib.hf.LogitsProcessor(grammar, tokenizer)
-                except AttributeError, TypeError:
+                except (AttributeError, TypeError):
                     # Fallback: use grammar directly if LogitsProcessor unavailable
                     return None, False
 

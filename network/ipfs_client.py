@@ -673,9 +673,9 @@ async def fetch_ipfs(cid: str, timeout: int = 30) -> bytes | None:
                                     f"IPFS file {cid} from {name} exceeds 10MB limit ({file_size} bytes) → skipping"
                                 )
                                 return None
-                        except ValueError, TypeError:  # noqa: BLE001
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
-            except TimeoutError, httpx.TimeoutException, httpx.HTTPError:
+            except (TimeoutError, httpx.TimeoutException, httpx.HTTPError):
                 continue
             except Exception:
                 continue

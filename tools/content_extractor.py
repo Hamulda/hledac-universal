@@ -141,7 +141,7 @@ def extract_structured_snippet(data: str, max_chars: int = 20000) -> str:
         if values:
             snippet = " | ".join(values[:5])
             return snippet[:max_chars]
-    except ValueError, TypeError:  # noqa: BLE001
+    except (ValueError, TypeError):  # noqa: BLE001
         pass
     return data[:max_chars]
 

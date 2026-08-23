@@ -862,7 +862,7 @@ class GenerationalCache[K, V]:
                     del gen[key]
                     self._evictions += 1
                     evicted += 1
-                except StopIteration, KeyError:
+                except (StopIteration, KeyError):
                     break
         except Exception:  # noqa: BLE001
             pass

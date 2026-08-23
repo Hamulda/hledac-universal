@@ -139,7 +139,7 @@ def _normalize_finding(
         return None
     try:
         confidence = float(raw.get("confidence", DEFAULT_CONFIDENCE) or DEFAULT_CONFIDENCE)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         confidence = DEFAULT_CONFIDENCE
     confidence = max(0.0, min(1.0, confidence))
 

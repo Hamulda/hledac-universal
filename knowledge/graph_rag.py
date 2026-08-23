@@ -1858,7 +1858,7 @@ class GraphRAGOrchestrator:
                     return dt.strftime("%Y")
                 else:
                     return dt.strftime("%Y-%m")
-            except ValueError, AttributeError:
+            except (ValueError, AttributeError):
                 return None
 
         bucket_facts: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1922,7 +1922,7 @@ class GraphRAGOrchestrator:
                 ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                 bucket_key = ts.strftime("%Y-%m") if bucket == "month" else ts.strftime("%Y")
                 claims_with_ts.append((claim, bucket_key, fact))
-            except ValueError, AttributeError:
+            except (ValueError, AttributeError):
                 continue
         claim_groups: dict[tuple, list[tuple]] = defaultdict(list)
         for (subject, predicate, obj), bucket_key, fact in claims_with_ts:

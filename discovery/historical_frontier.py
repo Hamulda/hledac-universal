@@ -63,7 +63,7 @@ async def async_search_historical_frontier(
     # Bounds
     try:
         max_results = max(1, min(int(max_results), 20))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         max_results = 10
     query = query.strip() if query else ""
     if not query:

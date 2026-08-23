@@ -1,0 +1,23 @@
+{
+  "name": "pypi_api",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "get_package_metadata",
+      "description": "Vrátí metadata Python balíčku z PyPI",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "package_name": { "type": "string", "description": "Název balíčku" }
+        },
+        "required": ["package_name"]
+      },
+      "tool_call_template": {
+        "call_template_type": "http",
+        "url": "https://pypi.org/pypi/${package_name}/json",
+        "http_method": "GET"
+      }
+    }
+  ]
+}

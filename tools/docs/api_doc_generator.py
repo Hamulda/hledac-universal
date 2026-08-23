@@ -349,7 +349,7 @@ class APIDocGenerator:
                         try:
                             value = ast.literal_eval(node.value)
                             constants[target.id] = value
-                        except ValueError, SyntaxError:
+                        except (ValueError, SyntaxError):
                             constants[target.id] = value_str
                     else:
                         constants[target.id] = str(node.value)

@@ -93,7 +93,7 @@ try:
 
     _rust_ane = rust.raw.module.ane if hasattr(rust.raw.module, "ane") else None
     _ANERUST_AVAILABLE = _rust_ane is not None
-except ImportError, AttributeError:
+except (ImportError, AttributeError):
     _rust_ane = None
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
 

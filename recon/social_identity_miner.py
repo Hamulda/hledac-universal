@@ -546,7 +546,7 @@ class SocialIdentityMiner:
                     urls.extend(self._scan_text_for_urls(env["raw_text"]))
                 elif "text" in env:
                     urls.extend(self._scan_text_for_urls(env["text"]))
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 urls.extend(self._scan_text_for_urls(payload))
             finding_str = str(finding)
             urls.extend(self._scan_text_for_urls(finding_str))

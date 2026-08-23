@@ -1,6 +1,6 @@
 """JS Renderers — extracted from public_fetcher.py (ISSUE-014 REFACTOR).
 
-Provides JavaScript rendering via Camoufox, nodriver, and Playwright.
+Provides JavaScript rendering via nodriver and Playwright.
 Optimized for M1 8GB with adaptive memory-aware concurrency.
 
 """
@@ -18,31 +18,14 @@ if TYPE_CHECKING:
 
 from hledac.universal._core.env_config import ENV
 
-_CAMOUFOX_LOCK: asyncio.Lock | None = None
-_CAMOUFOX_LOCK_INIT: bool = False
-
 _JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
 
 # M1 8GB adaptive max bytes
 MAX_BYTES_HARD_PRESSURE: Final[int] = 5000000
 
-_CAMOUFOX_OS_ROTATION: tuple[str, ...] = ("macos", "windows", "linux")
-_CAMOUFOX_MAX_RETRIES: int = 3
+
 
 _NODRIVER_MAX_RETRIES: int = 2
-
-
-def _get_camoufox_lock() -> asyncio.Lock:
-    """Lazily create camoufox lock in the current event loop.
-
-    ISSUE-014 FIX: asyncio.Lock() at module import time causes "no running event loop"
-    errors on macOS. This function creates the lock lazily on first async access.
-    """
-    global _CAMOUFOX_LOCK, _CAMOUFOX_LOCK_INIT
-    if _CAMOUFOX_LOCK is None or not _CAMOUFOX_LOCK_INIT:
-        _CAMOUFOX_LOCK = asyncio.Lock()
-        _CAMOUFOX_LOCK_INIT = True
-    return _CAMOUFOX_LOCK
 
 
 def _get_js_renderer_semaphore() -> asyncio.Semaphore:
@@ -86,7 +69,7 @@ class _JSRendererCapability:
     F-GLOBAL: Encapsulates _js_renderer_capability dict and
     _js_renderer_capability_lock.
 
-    Tracks availability of camoufox, nodriver, and playwright.
+    Tracks availability of nodriver and playwright.
     Uses threading.Lock for thread-safe access.
     Cached after first check — use reset() to force re-check.
     """
@@ -94,7 +77,7 @@ class _JSRendererCapability:
     __slots__ = ("_capability", "_lock")
 
     def __init__(self) -> None:
-        self._capability: dict[str, str | None] = {"camoufox": None, "nodriver": None, "playwright": None}
+        self._capability: dict[str, str | None] = {"nodriver": None, "playwright": None}
         self._lock = threading.Lock()
 
     def get(self) -> dict[str, str | None]:
@@ -105,7 +88,7 @@ class _JSRendererCapability:
     def reset(self) -> None:
         """Reset all capabilities to unknown (force re-check)."""
         with self._lock:
-            self._capability = {"camoufox": None, "nodriver": None, "playwright": None}
+            self._capability = {"nodriver": None, "playwright": None}
 
     def mark_unavailable(self, name: str, reason: str) -> None:
         """Mark a renderer as unavailable with a reason string."""
@@ -119,22 +102,9 @@ class _JSRendererCapability:
         Returns capability dict with reasons for unavailability.
         """
         with self._lock:
-            self._check_camoufox()
             self._check_nodriver()
             self._check_playwright()
             return dict(self._capability)
-
-    def _check_camoufox(self) -> None:
-        """Check camoufox availability."""
-        if self._capability["camoufox"] is not None:
-            return
-        try:
-            import camoufox
-
-            _ = camoufox.Session
-            self._capability["camoufox"] = None
-        except Exception as e:  # noqa: BLE001 — best-effort
-            self._capability["camoufox"] = f"camoufox_unavailable: {e}"
 
     def _check_nodriver(self) -> None:
         """Check nodriver availability."""
@@ -256,69 +226,9 @@ def compute_effective_max_bytes(requested: int) -> int:
 TOR_SOCKS_PROXY: Final[str] = os.environ.get("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 
 
-async def fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
-    """
-    Fetch JS-heavy page via Camoufox (Firefox-based anti-detect).
-    Max 1 instance, protected by _CAMOUFOX_LOCK singleton.
-    M1-optimized: headless, WebGL spoofed for Apple M1.
-
-    F202H: Uses opsec_policy.get_renderer_policy() for M1 conflict guard —
-    replaces inline is_embedding_context_active() check with centralized policy.
-    """
-    try:
-        from hledac.universal.embedding_pipeline import is_embedding_context_active
-        from hledac.universal.runtime.opsec_policy import OPSECContext, get_renderer_policy
-
-        has_model = is_embedding_context_active()
-        ctx = OPSECContext(has_model_context=has_model)
-        policy = get_renderer_policy(ctx)
-        if not policy.allowed:
-            return ""
-    except Exception:  # noqa: BLE001 — best-effort
-        pass
-    try:
-        from camoufox.async_api import AsyncCamoufox
-    except ImportError:
-        return ""
-    async with _get_js_renderer_semaphore():
-        return await _camoufox_locked(url, timeout)
-
-
-async def _camoufox_locked(url: str, timeout: float) -> str:
-    """
-    F226A: Camoufox body inside the original _CAMOUFOX_LOCK + outer JS semaphore.
-    P2-4: Added os-rotation retry — each OS variant generates a different
-    auto-generated fingerprint, so dark web sites that block one fingerprint
-    may accept another. Retries up to 3 OS variants before giving up.
-    """
-    try:
-        from camoufox.async_api import AsyncCamoufox
-    except ImportError:
-        return ""
-    async with _get_camoufox_lock():
-        for attempt in range(_CAMOUFOX_MAX_RETRIES):
-            os_choice = _CAMOUFOX_OS_ROTATION[attempt % len(_CAMOUFOX_OS_ROTATION)]
-            try:
-                async with AsyncCamoufox(
-                    headless=True, os=os_choice, webgl_config=("Apple", "Apple M1, or similar")
-                ) as browser:
-                    page = await browser.new_page()
-                    try:
-                        await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
-                        html = await page.content()
-                    finally:
-                        await page.close()
-                    return html
-            except Exception as e:  # noqa: BLE001 — best-effort
-                str(e)
-                continue
-        return ""
-
-
 async def fetch_with_nodriver(url: str, url_kind: str = "", url_host: str = "") -> str:
     """
     F265C: Primary JS fetch via nodriver (direct CDP, no WebDriver).
-    On M1, nodriver is more stable than Camoufox — used as first choice.
     Requires Chrome binary present. Returns "" with telemetry on failure.
 
     B1: url_kind/url_host params — caller pre-classified via classify_url_cached.
@@ -432,7 +342,7 @@ async def _playwright_locked(url: str, timeout: float) -> str:
 
 async def teardown_browser_pool() -> None:
     """
-    Teardown nodriver BrowserPool + camoufox shared state at sprint winddown.
+    Teardown nodriver BrowserPool at sprint winddown.
 
     F-02: BrowserPool.close() stops all idle Chromium instances and marks the
     pool as closed. BrowserPool is a lazy singleton — created on first use,
@@ -456,7 +366,7 @@ async def teardown_browser_pool() -> None:
     except Exception as _e:  # noqa: BLE001 — best-effort
         pass
 
-    # Legacy semaphore teardown (camoufox still uses it)
+    # Legacy semaphore teardown (nodriver/playwright still use it)
     global _JS_RENDERER_SEMAPHORE
     try:
         _sem = _JS_RENDERER_SEMAPHORE

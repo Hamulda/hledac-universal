@@ -1,0 +1,25 @@
+{
+  "name": "read_file_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read file contents with line offset and limit",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Absolute file path" },
+          "offset": { "type": "number", "description": "Line offset (1-indexed, default 1)" },
+          "limit": { "type": "number", "description": "Max lines to read (default 2000)" }
+        },
+        "required": ["path"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "sed",
+        "args": ["-n", "${offset:-1},${limit:-2000}p", "${path}"]
+      }
+    }
+  ]
+}

@@ -711,7 +711,7 @@ class DarkWebCrawler:
             try:
                 if w and h and (int(w) < 20) and (int(h) < 20):
                     continue
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 pass
             candidates.append(urljoin(page_url, src))
             if len(candidates) >= 3:

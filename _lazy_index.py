@@ -25,7 +25,7 @@ def _scan_module_public_attrs(mod_path: str) -> list[str]:
     """
     try:
         mod = import_module(mod_path)
-    except ImportError, ModuleNotFoundError:
+    except (ImportError, ModuleNotFoundError):
         return []
 
     # __all__ takes precedence — it's the authoritative public API list

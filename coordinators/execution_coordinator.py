@@ -144,7 +144,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             self._ghost_available = True
             initialized_any = True
             logger.info("ExecutionCoordinator: GhostDirector initialized")
-        except ImportError, IndentationError:
+        except (ImportError, IndentationError):
             logger.warning("ExecutionCoordinator: GhostDirector not available")
         except Exception as e:
             logger.warning(f"ExecutionCoordinator: GhostDirector init failed: {e}")

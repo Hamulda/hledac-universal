@@ -260,7 +260,7 @@ class ParallelExecutionOptimizer:
             if raw:
                 val = int(raw)
                 return max(1, min(val, 16))
-        except ValueError, TypeError:  # noqa: BLE001
+        except (ValueError, TypeError):  # noqa: BLE001
             pass
         return 4
 

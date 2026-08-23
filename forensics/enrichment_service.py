@@ -810,7 +810,7 @@ class ForensicsEnricher:
 
                 result = await io_bound(_sync_whois)
             return result if result else None
-        except TimeoutError, Exception:
+        except (TimeoutError, Exception):
             return None
 
     async def _ssl_lookup(self, hostname: str, port: int = 443) -> dict[str, Any] | None:
@@ -852,7 +852,7 @@ class ForensicsEnricher:
 
                 result = await io_bound(_sync_ssl)
             return result if result else None
-        except TimeoutError, Exception:
+        except (TimeoutError, Exception):
             return None
 
     async def _dns_lookup(self, domain: str) -> dict[str, Any] | None:
@@ -923,7 +923,7 @@ class ForensicsEnricher:
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
                 result = await _async_dns()
             return result if result else None
-        except TimeoutError, Exception:
+        except (TimeoutError, Exception):
             return None
 
     async def _rdns_lookup(self, ip_address: str) -> dict[str, Any] | None:
@@ -952,7 +952,7 @@ class ForensicsEnricher:
 
                 result = await io_bound(_sync_rdns)
             return result if result else None
-        except TimeoutError, Exception:
+        except (TimeoutError, Exception):
             return None
 
 
@@ -1130,7 +1130,7 @@ def make_canonical_finding_from_enrichment(
             ts = 0.0
         try:
             confidence = float(getattr(original_finding, "confidence", 0.7) or 0.7)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             confidence = 0.7
         confidence = max(0.0, min(1.0, confidence))
         query_raw = getattr(original_finding, "query", "") or ""

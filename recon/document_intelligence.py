@@ -1043,15 +1043,12 @@ class PDFAnalyzer:
                 # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
                 loop = asyncio.get_running_loop()
                 if loop.is_running():
-                    # If we're already in an async context, schedule the coroutine
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(
-                            asyncio.run, run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
-                        )
-                        result_data = future.result(timeout=65.0)  # Slightly higher than subprocess timeout
-                        return self._convert_sandbox_result(result_data)
+                    # P0-3 FIX: Use run_coroutine_threadsafe instead of executor.submit(asyncio.run)
+                    # asyncio.run() inside ThreadPoolExecutor is a M1 crash vector
+                    coro = run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
+                    future = asyncio.run_coroutine_threadsafe(coro, loop)
+                    result_data = future.result(timeout=65.0)
+                    return self._convert_sandbox_result(result_data)
                 else:
                     # No running loop - use asyncio.run
                     result_data = asyncio.run(run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0))

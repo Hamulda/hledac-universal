@@ -1,0 +1,24 @@
+{
+  "name": "write_file_manual",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "write_file",
+      "description": "Write content to a file, creating or overwriting it",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Absolute file path" },
+          "content": { "type": "string", "description": "File content to write" }
+        },
+        "required": ["path", "content"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "tee",
+        "args": ["${path}"]
+      }
+    }
+  ]
+}

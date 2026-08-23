@@ -1,0 +1,23 @@
+{
+  "name": "diff_validator",
+  "manual_version": "1.0.0",
+  "utcp_version": "1.0.1",
+  "tools": [
+    {
+      "name": "validate_git_diff",
+      "description": "Zkontroluje syntaxi, formátování a chyby přes ruff a cargo pouze u souborů modifikovaných v gitu.",
+      "inputs": {
+        "type": "object",
+        "properties": {
+          "scope": { "type": "string", "description": "Rozsah validace: python, rust nebo all" }
+        },
+        "required": ["scope"]
+      },
+      "tool_call_template": {
+        "call_template_type": "cli",
+        "command": "python3",
+        "args": [".utcp_tools/diff_validator.py", "${scope}"]
+      }
+    }
+  ]
+}

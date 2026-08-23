@@ -767,7 +767,7 @@ class ContentDeduplicator(BaseDeduplicator):
         """Get ngram cap from environment with safe fallback."""
         try:
             return int(os.environ.get("HLEDAC_DEDUP_MAX_NGRAMS", str(self._DEFAULT_MAX_NGRAMS)))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return self._DEFAULT_MAX_NGRAMS
 
     def _compute_character_hash(self, content: str) -> str:
