@@ -268,11 +268,11 @@ class InferencePipeline:
 
         # ANE task (if available and small batch exists)
         if self._ane_available and small_batch:
-            coros.append(asyncio.create_task(self._execute_ane_batch(small_batch)))
+            coros.append(safe_create_task(self._execute_ane_batch(small_batch)))
 
         # GPU task (if available and large batch exists)
         if self._mlx_available and large_batch:
-            coros.append(asyncio.create_task(self._execute_gpu_batch(large_batch)))
+            coros.append(safe_create_task(self._execute_gpu_batch(large_batch)))
 
         # CPU fallback if no accelerators
         if not coros:
@@ -495,13 +495,13 @@ class InferencePipeline:
             if len(tasks) <= self._max_parallel:
                 # Single batch fits within parallel limit
                 coro = self._execute_batch(accelerator, tasks)
-                coros.append(asyncio.create_task(coro))
+                coros.append(safe_create_task(coro))
             else:
                 # Split large batch into smaller chunks
                 chunks = self._chunk_tasks(tasks, self._max_parallel)
                 for chunk in chunks:
                     coro = self._execute_batch(accelerator, chunk)
-                    coros.append(asyncio.create_task(coro))
+                    coros.append(safe_create_task(coro))
 
         if not coros:
             return []

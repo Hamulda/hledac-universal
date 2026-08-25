@@ -21,15 +21,10 @@ from dataclasses import dataclass, field
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import _check_gathered
 
-try:
-    import orjson
-except ImportError:
-    orjson = None
-try:
-    import httpx
-except ImportError:
-    httpx = None
+orjson = lazy_import("orjson", default=None)
+httpx = lazy_import("httpx", default=None)
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.utils.optional_imports import lazy_import
 
 logger = logging.getLogger("hledac")
 CC_INDEX_API = "https://index.commoncrawl.org/"

@@ -169,17 +169,11 @@ mod quality_gate;
 #[allow(dead_code)]
 mod query_terms;
 
-// DEAD: collections_backup exists with register_functions() but is never declared in lib.rs
-// No Python callers, no registration call needed
-#[allow(dead_code)]
-mod collections_backup;
+
 
 mod rate_limit;
 
-// ZOMBIE: Marked as REMOVED but kept for potential future use
-// No Python callers, no registration call needed
-#[allow(dead_code)]
-mod regex_lz4;
+
 
 mod rolling_hash;
 
@@ -252,9 +246,7 @@ mod url_ops;
 
 mod url_set;
 
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
-mod warc_parser;
+
 
 mod xxhash_ext;
 
@@ -370,10 +362,7 @@ mod arti_bridge;
 #[cfg(feature = "quic")]
 mod quic;
 
-#[cfg(feature = "embedded_tor")]
-// ZOMBIE: No Python callers
-#[allow(dead_code)]
-mod sendfile;
+
 
 #[cfg(feature = "mlx_bridge")]
 // ZOMBIE: No Python callers
@@ -593,7 +582,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pool_run::register_functions(&m)?;
     quality_gate::register_functions(&m)?;
     query_terms::register_functions(&m)?;
-    regex_lz4::register(&m)?;
     serde_json_rs::register_functions(&m)?;
     signal_batch::register_functions(&m)?;
     simd_similarity::register_functions(&m)?;
@@ -613,13 +601,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ioc_dedup::register_class(&m)?;
     rate_limit::register_module(&m)?;
     unindexed_scanner::register_module(&m)?;
-    warc_parser::register_module(&m)?;
 
     // Feature-gated modules
     #[cfg(feature = "dns")]
     dns_tunnel::register_functions(&m)?;
-    #[cfg(feature = "embedded_tor")]
-    sendfile::register_functions(&m)?;
+
     #[cfg(feature = "fulltext")]
     graph_analytics::register_functions(&m)?;
     lmdb_dht::register_functions(&m)?;

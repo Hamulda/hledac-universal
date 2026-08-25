@@ -18,11 +18,11 @@ GHOST_INVARIANTS:
 """
 
 import logging
-import os
 import time
 
 import httpx
 
+from hledac.universal._core.env_config import ENV
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 # DRY: Shared search lane utilities (DRY-2026-08-07)
@@ -42,14 +42,15 @@ RATE_LIMIT_KEY = "shodan_api"
 
 # [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
 # Gaussian sigma = 0.8s gives decorrelated inter-request intervals.
-_SHODAN_JITTER_SIGMA_S: float = float(os.environ.get("HLEDAC_SHODAN_JITTER_SIGMA_S", "0.8"))
+_SHODAN_JITTER_SIGMA_S: float = ENV.get_float("HLEDAC_SHODAN_JITTER_SIGMA_S", default=0.8)
 
 # F266: Circuit breaker — domain for Shodan API
 _CB_DOMAIN = "api.shodan.io"
 
 
 def _get_api_key() -> str | None:
-    return os.environ.get("SHODAN_API_KEY") or None
+    """Resolve the Shodan key: canonical HLEDAC_SHODAN_API_KEY, then SHODAN_API_KEY."""
+    return ENV.get_api_key("HLEDAC_SHODAN_API_KEY") or None
 
 
 def _build_findings(

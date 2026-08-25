@@ -88,7 +88,7 @@ class ExportManager:
                 P18 export stays consistent with the post-sprint export.
         """
         if output_dir is None:
-            output_dir = os.environ.get("GHOST_EXPORT_DIR")
+            output_dir = os.environ.get("HLEDAC_EXPORT_DIR", os.environ.get("GHOST_EXPORT_DIR"))
         if output_dir is None:
             output_dir = os.path.expanduser("~/hledac_outputs")
         self._output_dir = Path(output_dir)

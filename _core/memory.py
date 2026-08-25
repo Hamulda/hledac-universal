@@ -48,6 +48,8 @@ logger = logging.getLogger(__name__)
 # Lazy flag: True pokud Rust extension dostupná
 _RUST_AVAILABLE: bool = False
 _RUST_LOADED: bool = False
+# Holder for the optional Rust threshold-setter (None when Rust SSOT missing).
+_RUST_SET_THRESHOLDS_FN: Any = None
 
 
 def _ensure_rust() -> bool:
@@ -60,14 +62,20 @@ def _ensure_rust() -> bool:
     from hledac.universal._core.rust_backend import rust
 
     raw = rust.raw
-    _rust_snapshot = raw.get_memory_snapshot
-    _rust_rss = raw.get_process_rss_gib
-    _rust_avail = raw.get_available_memory_gib
-    _rust_metal = raw.get_metal_active_memory_bytes
-    _rust_metal_gib = raw.get_metal_active_memory_gib
-    _rust_pressure = raw.memory_pressure_level
-    _rust_peak = raw.peak_rss_bytes
-    _rust_set_thresholds = raw.set_memory_pressure_thresholds
+    try:
+        _rust_snapshot = raw.get_memory_snapshot
+        _rust_rss = raw.get_process_rss_gib
+        _rust_avail = raw.get_available_memory_gib
+        _rust_metal = raw.get_metal_active_memory_bytes
+        _rust_metal_gib = raw.get_metal_active_memory_gib
+        _rust_pressure = raw.memory_pressure_level
+        _rust_peak = raw.peak_rss_bytes
+        # Optional symbol — tolerate a build that predates it (degrade, don't crash).
+        _rust_set_thresholds = getattr(raw, "set_memory_pressure_thresholds", None)
+    except AttributeError as exc:
+        logger.warning("[memory] Rust SSOT symbol missing, using Python fallback: %s", exc)
+        _RUST_AVAILABLE = False
+        return _RUST_AVAILABLE
     _RUST_AVAILABLE = all([_rust_snapshot, _rust_rss, _rust_avail, _rust_metal, _rust_pressure])
     if _RUST_AVAILABLE:
         globals()["_rust_snapshot"] = _rust_snapshot
@@ -77,11 +85,28 @@ def _ensure_rust() -> bool:
         globals()["_rust_metal_gib"] = _rust_metal_gib
         globals()["_rust_pressure"] = _rust_pressure
         globals()["_rust_peak"] = _rust_peak
-        globals()["set_memory_pressure_thresholds"] = _rust_set_thresholds
+        if _rust_set_thresholds is not None:
+            _RUST_SET_THRESHOLDS_FN = _rust_set_thresholds
         logger.debug("[memory] Rust SSOT loaded OK")
     else:
         logger.debug("[memory] Rust extension unavailable, using Python fallback")
     return _RUST_AVAILABLE
+
+
+def set_memory_pressure_thresholds(soft_gib: float, hard_gib: float) -> None:
+    """Set memory pressure soft/hard thresholds (GiB).
+
+    Always importable (used at module import by the UMA budget layer). Degrades
+    to a no-op when the Rust SSOT extension is unavailable, so a build that
+    predates the symbol cannot crash the whole import graph.
+    """
+    if _RUST_SET_THRESHOLDS_FN is None:
+        logger.debug("[memory] set_memory_pressure_thresholds: Rust SSOT unavailable, skipping")
+        return
+    try:
+        _RUST_SET_THRESHOLDS_FN(soft_gib, hard_gib)
+    except Exception as exc:
+        logger.debug("[memory] set_memory_pressure_thresholds failed: %s", exc)
 
 
 def get_memory_snapshot() -> dict[str, Any]:

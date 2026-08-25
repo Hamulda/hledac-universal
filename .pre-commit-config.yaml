@@ -61,6 +61,49 @@ repos:
         # Exclude test/probe/build dirs
         exclude: "^tests/|^probe_/|^evaluate/|^build/|^dist/|^\\.venv/"
 
+  # ── ISSUE-18: Stray backup-artifact hygiene guard (ban *.bak* outside .archive/) ─
+  - repo: local
+    hooks:
+      - id: ban-bak-artifacts
+        name: ban stray *.bak* artifacts
+        entry: uv run python tools/audit/ban_bak_artifacts.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+
+  # ── Invariant guards (AGENTS.md critical invariants enforced in CI) ──────
+  - repo: local
+    hooks:
+      - id: ban-asyncio-run-in-loop
+        name: ban asyncio.run() in running-loop context
+        entry: uv run python tools/audit/ban_asyncio_run_in_loop.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+      - id: ban-unbounded-seen-set
+        name: ban unbounded Set[] dedup (RotatingBloomFilter)
+        entry: uv run python tools/audit/ban_unbounded_seen_set.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+      - id: ban-ephemeral-httpx
+        name: ban ephemeral httpx clients
+        entry: uv run python tools/audit/ban_ephemeral_httpx.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+      - id: ban-raw-gather
+        name: ban asyncio.gather without return_exceptions=True
+        entry: uv run python tools/audit/ban_raw_gather.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+
   # ── Pyright: static type checking (~20-40s, parallelizable) ──────────────
   - repo: local
     hooks:

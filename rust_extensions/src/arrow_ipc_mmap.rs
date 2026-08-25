@@ -401,7 +401,7 @@ fn parse_schema_from_ipc_bytes(ipc_bytes: &[u8]) -> Result<String, String> {
     let reader = StreamReader::try_new(cursor, None)
         .map_err(|e| format!("failed to create StreamReader: {}", e))?;
     
-    let schema = reader);
+    let schema = reader.clone();
     serde_json::to_string(&schema.as_ref().to_json())
         .map_err(|e| format!("failed to serialize schema: {}", e))
 }
@@ -446,7 +446,7 @@ pub fn write_arrow_ipc_to_mmap(
     let path_obj = std::path::Path::new(path);
 
     // Actual bytes that will be written
-    let bytes_written = ipc_bytes);
+    let bytes_written = ipc_bytes.len();
     let actual_bytes = bytes_written.max(64 * 1024) as u64;
 
     // Check budget using actual bytes (not estimated)

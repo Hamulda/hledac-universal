@@ -1,4 +1,18 @@
-"""Helper script to refactor _generate_and_store_report function."""
+"""DESTRUCTIVE — ONE-TIME REFACTOR SCRIPT (already applied).
+
+M-2026-FIX: Moved out of ``pipeline/`` because it contained raw
+``open(... "w")`` calls that, if accidentally executed, would mutate a
+production module (``pipeline/live_public_pipeline.py``). Migration is
+complete; this script exists only as a historical record. DO NOT RUN.
+
+If you need to apply a similar refactor: copy this file's logic into a
+fresh ``tools/scripts/migration/<timestamp>_*.py`` and never put destructive
+codemods in the source tree proper.
+"""
+
+from __future__ import annotations
+
+__all__ = []  # intentionally empty; do not import.
 
 import re
 

@@ -61,6 +61,7 @@ _WASI_ERRNO_IO: int = 29
 _WASI_ERRNO_NOMEM: int = 33
 _WASI_ERRNO_BADF: int = 8
 _WASI_ERRNO_NOTCONN: int = 45
+_WASI_ERRNO_ACCES: int = 13  # EACCES — permission denied (SSRF guard)
 
 # WASI address families
 _WASI_AF_INET: int = 0
@@ -200,6 +201,10 @@ class WasmWasiLinker:
             else:
                 return _WASI_ERRNO_INVAL
 
+            if self._is_blocked_address(host):
+                logger.warning(f"[wasm] SSRF guard blocked connect to {host}:{port}")
+                return _WASI_ERRNO_ACCES
+
             sock.connect((host, port))
             return _WASI_ERRNO_SUCCESS
         except TimeoutError:
@@ -208,6 +213,40 @@ class WasmWasiLinker:
             return _WASI_ERRNO_CONNREFUSED
         except OSError:
             return _WASI_ERRNO_IO
+
+    def _is_blocked_address(self, host: str) -> bool:
+        """SSRF guard: True if ``host`` resolves to a non-public address.
+
+        Blocks loopback, private, link-local (incl. 169.254.169.254 cloud
+        metadata), CGNAT, reserved, multicast and unspecified ranges so a
+        guest module cannot pivot to internal services.
+        """
+        import ipaddress
+
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except Exception:
+            # Unresolvable / unexpected — fail closed.
+            return True
+        for info in infos:
+            try:
+                ip = info[4][0]
+                addr = ipaddress.ip_address(ip)
+            except Exception:
+                return True
+            if (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_reserved
+                or addr.is_multicast
+                or addr.is_unspecified
+            ):
+                return True
+            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+                if addr.ipv4_mapped.is_private:
+                    return True
+        return False
 
     def _host_sock_send(
         self,
@@ -526,10 +565,17 @@ class WasmSandbox:
         logger.debug("Epoch ticker started")
 
     def _epoch_ticker_loop(self) -> None:
-        """Background loop that increments epoch."""
+        """Background loop that advances the engine epoch.
+
+        wasmtime's epoch interruption only fires when ``engine.increment_epoch()``
+        is called after a store deadline is set; previously this loop only slept,
+        so runaway guest loops were never interrupted.
+        """
         while self._epoch_ticker_running:
             try:
                 time.sleep(self.epoch_deadline / 3)
+                if self._engine is not None:
+                    self._engine.increment_epoch()
             except Exception as e:
                 logger.debug(f"Epoch ticker error: {e}")
 

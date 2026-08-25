@@ -16,8 +16,12 @@ import logging
 from typing import Any
 
 from hledac.universal.pipeline._soa_types import FeedMatchedBatch
+from hledac.universal.utils.crawler_dedup import BoundedCappedSet
 
 logger = logging.getLogger(__name__)
+
+# Bounded run-level URL-seen set (M1 8GB memory safety).
+_SEEN_ENTRY_URLS_CAP = 200_000
 
 
 class DedupStage:
@@ -29,7 +33,7 @@ class DedupStage:
     __slots__ = ("_seen_entry_urls",)
 
     def __init__(self) -> None:
-        self._seen_entry_urls: set[str] = set()
+        self._seen_entry_urls: BoundedCappedSet = BoundedCappedSet(maxlen=_SEEN_ENTRY_URLS_CAP)
 
     @property
     def name(self) -> str:

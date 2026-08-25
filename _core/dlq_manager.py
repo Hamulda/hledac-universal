@@ -31,12 +31,11 @@ import logging
 import sqlite3
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 from collections.abc import Callable
 import aiosqlite
-if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 def _json_encode(obj: Any) -> str:
@@ -61,15 +60,15 @@ class DLQPayload:
     error_message: str
     payload_data: bytes
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     attempt_count: int = 0
-    last_attempt_at: Optional[datetime] = None
+    last_attempt_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {'payload_id': self.payload_id, 'sprint_id': self.sprint_id, 'source': self.source, 'error_type': self.error_type, 'error_message': self.error_message, 'payload_data': self.payload_data.hex(), 'metadata': self.metadata, 'created_at': self.created_at.isoformat(), 'attempt_count': self.attempt_count, 'last_attempt_at': self.last_attempt_at.isoformat() if self.last_attempt_at else None}
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> 'DLQPayload':
+    def from_row(cls, row: sqlite3.Row) -> DLQPayload:
         return cls(payload_id=row['payload_id'], sprint_id=row['sprint_id'], source=row['source'], error_type=row['error_type'], error_message=row['error_message'], payload_data=bytes.fromhex(row['payload_data']), metadata=_json_decode(row['metadata']) if row['metadata'] else {}, created_at=datetime.fromisoformat(row['created_at']), attempt_count=row['attempt_count'], last_attempt_at=datetime.fromisoformat(row['last_attempt_at']) if row['last_attempt_at'] else None)
 
 class DLQSchema:
@@ -86,11 +85,11 @@ class DLQManager:
     """
     __slots__ = ('_async_lock', '_initialized', '_lock', 'db_path')
 
-    def __init__(self, db_path: Optional[Path]=None):
+    def __init__(self, db_path: Path | None=None):
         self.db_path = db_path or Path.home() / '.hledac' / 'dlq' / 'dead_letter_queue.db'
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._async_lock: Optional[asyncio.Lock] = None
+        self._async_lock: asyncio.Lock | None = None
         self._initialized = False
 
     def _get_async_lock(self) -> asyncio.Lock:
@@ -149,7 +148,7 @@ class DLQManager:
             finally:
                 await conn.close()
 
-    def store_payload(self, payload_data: bytes, sprint_id: str, source: str, error: Exception, metadata: Optional[dict[str, Any]]=None) -> str:
+    def store_payload(self, payload_data: bytes, sprint_id: str, source: str, error: Exception, metadata: dict[str, Any] | None=None) -> str:
         """Uloží payload do DLQ (sync)."""
         try:
             self._ensure_initialized()
@@ -173,7 +172,7 @@ class DLQManager:
             conn.close()
         return payload_id
 
-    async def store_payload_async(self, payload_data: bytes, sprint_id: str, source: str, error: Exception, metadata: Optional[dict[str, Any]]=None) -> str:
+    async def store_payload_async(self, payload_data: bytes, sprint_id: str, source: str, error: Exception, metadata: dict[str, Any] | None=None) -> str:
         """Uloží payload do DLQ (async)."""
         try:
             await self._ensure_initialized_async()
@@ -198,7 +197,7 @@ class DLQManager:
             await conn.close()
         return payload_id
 
-    def retrieve_payloads(self, source: Optional[str]=None, error_type: Optional[str]=None, sprint_id: Optional[str]=None, limit: int=100, offset: int=0) -> list[DLQPayload]:
+    def retrieve_payloads(self, source: str | None=None, error_type: str | None=None, sprint_id: str | None=None, limit: int=100, offset: int=0) -> list[DLQPayload]:
         """Načte payloady z DLQ podle kritérií (sync)."""
         try:
             self._ensure_initialized()
@@ -226,7 +225,7 @@ class DLQManager:
         finally:
             conn.close()
 
-    async def retrieve_payloads_async(self, source: Optional[str]=None, error_type: Optional[str]=None, sprint_id: Optional[str]=None, limit: int=100, offset: int=0) -> list[DLQPayload]:
+    async def retrieve_payloads_async(self, source: str | None=None, error_type: str | None=None, sprint_id: str | None=None, limit: int=100, offset: int=0) -> list[DLQPayload]:
         """Načte payloady z DLQ podle kritérií (async)."""
         try:
             await self._ensure_initialized_async()
@@ -263,7 +262,7 @@ class DLQManager:
             return
         conn = self._get_connection()
         try:
-            conn.execute('\n                UPDATE dlq_payloads\n                SET attempt_count = attempt_count + 1,\n                    last_attempt_at = ?\n                WHERE payload_id = ?\n                ', (datetime.now(timezone.utc).isoformat(), payload_id))
+            conn.execute('\n                UPDATE dlq_payloads\n                SET attempt_count = attempt_count + 1,\n                    last_attempt_at = ?\n                WHERE payload_id = ?\n                ', (datetime.now(UTC).isoformat(), payload_id))
         except Exception:
             pass
         finally:
@@ -277,7 +276,7 @@ class DLQManager:
             return
         conn = await self._get_async_connection()
         try:
-            await conn.execute('\n                UPDATE dlq_payloads\n                SET attempt_count = attempt_count + 1,\n                    last_attempt_at = ?\n                WHERE payload_id = ?\n                ', (datetime.now(timezone.utc).isoformat(), payload_id))
+            await conn.execute('\n                UPDATE dlq_payloads\n                SET attempt_count = attempt_count + 1,\n                    last_attempt_at = ?\n                WHERE payload_id = ?\n                ', (datetime.now(UTC).isoformat(), payload_id))
             await conn.commit()
         except Exception:
             pass
@@ -290,7 +289,7 @@ class DLQManager:
             self._ensure_initialized()
         except Exception:
             return 0
-        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
         conn = self._get_connection()
         try:
             cursor = conn.execute('DELETE FROM dlq_payloads WHERE created_at < ?', (cutoff.isoformat(),))
@@ -306,7 +305,7 @@ class DLQManager:
             await self._ensure_initialized_async()
         except Exception:
             return 0
-        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
         conn = await self._get_async_connection()
         try:
             cursor = await conn.execute('DELETE FROM dlq_payloads WHERE created_at < ?', (cutoff.isoformat(),))
@@ -331,7 +330,7 @@ class DLQManager:
             return []
         finally:
             conn.close()
-_dlq_manager: Optional[DLQManager] = None
+_dlq_manager: DLQManager | None = None
 _dlq_lock = threading.RLock()
 
 def get_dlq_manager() -> DLQManager:
@@ -343,7 +342,7 @@ def get_dlq_manager() -> DLQManager:
                 _dlq_manager = DLQManager()
     return _dlq_manager
 
-def dlq_catch(source: str, serialize_payload: bool=True, metadata_extractor: Optional[Callable[..., dict[str, Any]]]=None) -> Callable:
+def dlq_catch(source: str, serialize_payload: bool=True, metadata_extractor: Callable[..., dict[str, Any]] | None=None) -> Callable:
     """Dekorátor pro automatické zachycení výjimek a ukládání do DLQ.
 
     Args:

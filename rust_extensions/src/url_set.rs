@@ -117,7 +117,7 @@ impl MmapUrlSet {
         };
 
         if !force_new && p.exists() {
-            let _ = store);
+            let _ = store.clone();
         }
         Ok(store)
     }
@@ -224,7 +224,7 @@ impl MmapUrlSet {
 
 impl Drop for MmapUrlSet {
     fn drop(&mut self) {
-        let _ = self);
+        let _ = self.clone();
     }
 }
 
@@ -306,7 +306,7 @@ impl MmapUrlSet {
 
     pub fn memory_bytes(&self) -> usize {
         // Issue #2 fix: HashSet capacity estimation
-        let hashes = self.hashes);
+        let hashes = self.hashes.clone();
         let entry_size = 16 + 8;
         hashes.capacity() * std::mem::size_of::<u64>() + hashes.len() * entry_size
     }

@@ -27,6 +27,7 @@ Environment variables:
 """
 
 from __future__ import annotations
+from hledac.universal.utils.asyncx import parallel_ok
 
 import asyncio
 import gc
@@ -300,7 +301,7 @@ async def mixed_workload_native(iterations: int = 10) -> None:
         trace_id, span_id, span_key = async_span_enter("mixed_workload")
         try:
             tasks = [asyncio.create_task(asyncio.sleep(0)) for _ in range(iterations)]
-            await asyncio.gather(*tasks)
+            await parallel_ok(*tasks, label="benchmark")
         finally:
             async_span_exit(span_key, trace_id, span_id)
     except ImportError:
@@ -310,7 +311,7 @@ async def mixed_workload_native(iterations: int = 10) -> None:
 async def mixed_workload_python(iterations: int = 10) -> None:
     """Mixed workload using Python asyncio."""
     tasks = [asyncio.create_task(asyncio.sleep(0)) for _ in range(iterations)]
-    await asyncio.gather(*tasks)
+    await parallel_ok(*tasks, label="benchmark")
 
 
 # =============================================================================
@@ -338,7 +339,7 @@ def benchmark_concurrency_scaling() -> dict[int, tuple[float, float]]:
                 trace_id, span_id, span_key = async_span_enter(f"concurrent_{concurrency}")
                 try:
                     tasks = [asyncio.create_task(asyncio.sleep(0)) for _ in range(concurrency)]
-                    await asyncio.gather(*tasks)
+                    await parallel_ok(*tasks, label="benchmark")
                 finally:
                     async_span_exit(span_key, trace_id, span_id)
             except ImportError:
@@ -347,7 +348,7 @@ def benchmark_concurrency_scaling() -> dict[int, tuple[float, float]]:
         # Python asyncio
         async def concurrent_python() -> None:
             tasks = [asyncio.create_task(asyncio.sleep(0)) for _ in range(concurrency)]
-            await asyncio.gather(*tasks)
+            await parallel_ok(*tasks, label="benchmark")
 
         # Run both
         result_native = run_benchmark(

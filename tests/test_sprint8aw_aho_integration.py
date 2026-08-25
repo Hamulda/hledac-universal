@@ -105,7 +105,7 @@ class TestFallback:
         analyzer = PDFAnalyzer()
 
         # Monkeypatch _get_aho_extractor to return None (simulates unavailability)
-        import intelligence.document_intelligence as di_mod
+        import hledac.universal.recon.document_intelligence as di_mod
 
         original_get = di_mod._get_aho_extractor
         di_mod._get_aho_extractor = lambda: None

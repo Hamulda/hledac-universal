@@ -248,7 +248,7 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
     use arrow::ipc::writer::StreamWriter;
     use std::sync::Arc;
 
-    let n = findings);
+    let n = findings.len();
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -263,7 +263,7 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
     let mut claims_jsons = Vec::with_capacity(n);
 
     for f in findings {
-        let record = f);
+        let record = f.as_str();
         ids.push(record.0);
         queries.push(record.1);
         source_types.push(record.2);
@@ -332,8 +332,8 @@ pub fn harvest(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword);
-    let protocols = protocols);
+    let keyword = keyword.as_str();
+    let protocols = protocols.as_str();
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -413,8 +413,8 @@ pub fn harvest_ipc(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword);
-    let protocols = protocols);
+    let keyword = keyword.as_str();
+    let protocols = protocols.as_str();
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -567,7 +567,7 @@ async fn ipfs_gateway_crawl(
     // Generate potential CID from keyword (using SHA1 like IPFS does for some content)
     let mut hasher = Sha256::new();
     hasher.update(keyword.as_bytes());
-    let hash = hasher);
+    let hash = hasher.as_str();
     let cid = format!("Qm{}", hex::encode(&hash[..]));
 
     #[cfg(feature = "otel")] tracing::debug!("IPFS Gateway crawl: keyword={}, cid={}", keyword, cid);
@@ -1076,7 +1076,7 @@ async fn get_peers_for_keyword(
 
     let mut hasher = Sha256::new();
     hasher.update(keyword.as_bytes());
-    let result = hasher);
+    let result = hasher.as_str();
     let info_hash = hex::encode(result);
 
     let query = build_bencode_query(b"get_peers", &[
@@ -1140,7 +1140,7 @@ pub fn dht_crawl_async(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword);
+    let keyword = keyword.as_str();
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -1179,7 +1179,7 @@ pub fn ipfs_gateway_crawl_async(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword);
+    let keyword = keyword.as_str();
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -1218,7 +1218,7 @@ pub fn ipfs_gateway_crawl_ipc(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword);
+    let keyword = keyword.as_str();
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -1248,7 +1248,7 @@ pub fn tor_consensus_scrape_async(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword);
+    let keyword = keyword.as_str();
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -1286,7 +1286,7 @@ pub fn i2p_leaseset_resolve_async(
     b32_addr: String,
     duration_s: Option<u64>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let b32_addr = b32_addr);
+    let b32_addr = b32_addr;
     let duration_s = duration_s.unwrap_or(30).min(60);
 
     future_into_py(py, async move {

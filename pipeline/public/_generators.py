@@ -396,38 +396,74 @@ def generate_seed_context_bootstrap_urls(
 async def generate_keyword_bootstrap_urls(
     query: str, max_urls: int = _MAX_KEYWORD_BOOTSTRAP_URLS
 ) -> list[DiscoveryHit]:
-    """Keyword-based search engine bootstrap — falls back through multiple engines."""
+    """Keyword-based search engine bootstrap — falls back through multiple engines.
+
+    M-2026-FIX: the legacy loop iterated engines sequentially and — more
+    importantly — never actually passed the engine name to
+    ``search_multi_engine`` (which is engine-agnostic). All engines ultimately
+    resolved to the same backend. Now we fan the call out concurrently with a
+    bounded timeout per attempt; the first non-empty result wins.
+    """
     from hledac.universal.discovery.duckduckgo_adapter import search_multi_engine
 
     if not query or not query.strip():
         return []
-    for engine in _PUBLIC_BOOTSTRAP_SEARCH_ENGINES:
+
+    async def _attempt(engine: str, per_timeout_s: float) -> tuple[str, list[dict]]:
         try:
-            raw_results = await search_multi_engine(query, max_results=max_urls)
-            if not raw_results:
-                continue
-            hits: list[DiscoveryHit] = []
-            for i, item in enumerate(raw_results[:max_urls]):
-                url = item.get("url", "") if isinstance(item, dict) else getattr(item, "url", "")
-                title = item.get("title", "") if isinstance(item, dict) else getattr(item, "title", "")
-                snippet = item.get("snippet", "") if isinstance(item, dict) else getattr(item, "snippet", "")
-                if not url:
-                    continue
-                hits.append(
-                    DiscoveryHit(
-                        query=query,
-                        title=title or f"{engine.capitalize()} result {i + 1}",
-                        url=url,
-                        snippet=snippet or f"Keyword bootstrap via {engine}: {query}",
-                        score=0.75,
-                        reason=f"keyword_bootstrap_{engine}",
-                        rank=i,
-                        source=engine,
-                        retrieved_ts=time.time(),
-                    )
-                )
-            if hits:
-                return hits
+            async with asyncio.timeout(per_timeout_s):
+                raw = await search_multi_engine(query, max_results=max_urls)
+                return (engine, list(raw or []))
         except Exception:
+            return (engine, [])
+
+    # M-2026-FIX: parallel fallback — first engine with non-empty results wins.
+    # We respect the engine list as a *priority ordering*: results from earlier
+    # engines are preferred when both arrive within the timeout window.
+    tasks = [safe_create_task(_attempt(e, per_timeout_s=8.0)) for e in _PUBLIC_BOOTSTRAP_SEARCH_ENGINES]
+    try:
+        done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED, timeout=10.0)
+    finally:
+        # Cancel any straggler engines as soon as one wins.
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        # Drain cancelled tasks silently (asyncio.gather with errors suppressed).
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    if not done:
+        return []
+
+    # Pick the engine that returned first with non-empty results.
+    chosen: tuple[str, list[dict]] | None = None
+    for fut in done:
+        engine, raw = fut.result()
+        if not raw:
             continue
-    return []
+        chosen = (engine, raw)
+        break
+    if chosen is None:
+        return []
+    engine, raw_results = chosen
+
+    hits: list[DiscoveryHit] = []
+    for i, item in enumerate(raw_results[:max_urls]):
+        url = item.get("url", "") if isinstance(item, dict) else getattr(item, "url", "")
+        title = item.get("title", "") if isinstance(item, dict) else getattr(item, "title", "")
+        snippet = item.get("snippet", "") if isinstance(item, dict) else getattr(item, "snippet", "")
+        if not url:
+            continue
+        hits.append(
+            DiscoveryHit(
+                query=query,
+                title=title or f"{engine.capitalize()} result {i + 1}",
+                url=url,
+                snippet=snippet or f"Keyword bootstrap via {engine}: {query}",
+                score=0.75,
+                reason=f"keyword_bootstrap_{engine}",
+                rank=i,
+                source=engine,
+                retrieved_ts=time.time(),
+            )
+        )
+    return hits

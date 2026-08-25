@@ -476,7 +476,8 @@ class UniversalMemoryCoordinator:
         try:
             import psutil
 
-            state["available_gb"] = psutil.virtual_memory().available / 1024**3
+            from hledac.universal.utils.sys_metrics import system_memory_sync
+            state["available_gb"] = system_memory_sync().available_gib
         except Exception:
             state["available_gb"] = 8.0
         return state
@@ -1063,8 +1064,8 @@ class UniversalMemoryCoordinator:
 
     def _get_available_memory(self) -> int:
         """Get available memory in bytes."""
-        vm = psutil.virtual_memory()
-        return int(vm.available)
+        from hledac.universal.utils.sys_metrics import system_memory_sync
+        return int(system_memory_sync().available_gib * 1024**3)
 
     async def _handle_memory_pressure(self, required_bytes: int) -> bool:
         """

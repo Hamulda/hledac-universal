@@ -341,6 +341,7 @@ class GlobalPeakCoScheduler:
         sem = self._subsystem_semaphores.get(subsystem)
         if sem is None:
             sem = contextlib.nullcontext()
+        admitted = False
         start_time = time.monotonic()
         self._active_guards += 1
         self._telemetry.active_guards = self._active_guards
@@ -384,6 +385,7 @@ class GlobalPeakCoScheduler:
                     peak_utilization=coordinator.snapshot().utilization_fraction,
                     mutex_held=None,
                 )
+                admitted = True
                 yield ctx
         except asyncio.CancelledError:
             self._telemetry.total_preemptions += 1
@@ -391,6 +393,11 @@ class GlobalPeakCoScheduler:
         except TimeoutError:
             raise
         except Exception:
+            if admitted:
+                # With-block raised after a successful admission — propagate the
+                # original exception instead of yielding a second time (which
+                # would corrupt the @asynccontextmanager generator).
+                raise
             logger.exception(f"[CoScheduler] Unexpected error for {subsystem}")
             yield AdmissionContext(
                 subsystem=subsystem.value, allocated_mb=0.0, wait_time_s=0.0, peak_utilization=0.0, mutex_held=None

@@ -112,7 +112,16 @@ class _HttpxPool:
         async with self._lock:
             if key in self._clients:
                 client = self._clients[key]
-                if hasattr(client, "closed") and (not client.closed):
+                # ISSUE #8 FIX: httpx exposes `is_closed`, NOT aiohttp's `closed`.
+                # The old `hasattr(client, "closed")` was ALWAYS False for httpx,
+                # so every cached client was discarded and rebuilt on each call —
+                # a bounded pool that behaved exactly like the per-call
+                # anti-pattern (fresh TLS handshake, zero H2 multiplexing).
+                if not getattr(client, "is_closed", True):
+                    # Refresh LRU recency on hit.
+                    if key in self._access_order:
+                        self._access_order.remove(key)
+                    self._access_order.append(key)
                     return client
                 del self._clients[key]
                 if key in self._access_order:

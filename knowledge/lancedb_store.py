@@ -84,7 +84,7 @@ def _get_mx():
 
 
 # C1-X FIX: Only attempt MLX import if SSOT says it's available
-_COMPILED_CACHE: dict[str, Any] = {}
+
 
 if MLX_AVAILABLE:
     try:
@@ -230,7 +230,7 @@ async def _ensure_write_workers() -> None:
         return
     _writer_shutdown = False
     for i in range(_NUM_WRITERS):
-        t = asyncio.create_task(_writer_loop(i))
+        t = safe_create_task(_writer_loop(i))
         _writer_tasks.append(t)
     logger.info(f"[LANCEDB:QW] {_NUM_WRITERS} write workers started")
 
@@ -462,6 +462,7 @@ class LanceDBIdentityStore:
         "_mlx_embed_manager",
         "_fallback_dim",
         "_writeback_buffer",
+        "_bg_tasks",
         "_writeback_lock",
         "_access_counts",
         "_index_build_status",
@@ -575,7 +576,19 @@ class LanceDBIdentityStore:
             )
         except Exception:
             self._autotune = None
-        self._cache_maintenance_task = asyncio.create_task(self._cache_maintenance_loop())
+        # ISSUE#11: track the maintenance loop in _bg_tasks so close()/shutdown()
+        # can cancel it. Previously assigned to a non-slotted _cache_maintenance_task
+        # attribute -> AttributeError on init AND never cancelled -> orphaned task.
+        self._bg_tasks: set[asyncio.Task] = set()
+        try:
+            _loop = asyncio.get_running_loop()
+            _maint = _loop.create_task(self._cache_maintenance_loop())
+            self._bg_tasks.add(_maint)
+            _maint.add_done_callback(self._bg_tasks.discard)
+        except RuntimeError:
+            # No running event loop (constructed outside async context) — skip
+            # background maintenance rather than crash (fail-safe per AGENTS.md).
+            logger.debug("[LANCEDB] no running loop; cache maintenance loop deferred")
         self._initialize()
 
     def _get_mlx_chunk_size(self) -> int:
@@ -667,6 +680,24 @@ class LanceDBIdentityStore:
                 for key, val in failed_items:
                     if key not in self._writeback_buffer:
                         self._writeback_buffer[key] = val
+            # ISSUE#11: re-enforce bound after re-adding failed items
+            self._enforce_writeback_bound()
+
+    def _enforce_writeback_bound(self) -> None:
+        """ISSUE#11: Strictly bound _writeback_buffer (M1 8GB safe).
+
+        Evicts the least-accessed entries (LRU-ish; deterministic FIFO on ties)
+        until len() <= _WRITEBACK_MAX. Called at every mutation point — including
+        the flush-failure re-add path — so the buffer can never grow unbounded
+        even when LMDB writes repeatedly fail.
+        """
+        overflow = len(self._writeback_buffer) - _WRITEBACK_MAX
+        if overflow <= 0:
+            return
+        victims = sorted(self._writeback_buffer.keys(), key=lambda k: self._access_counts.get(k, 0))[:overflow]
+        for victim in victims:
+            self._writeback_buffer.pop(victim, None)
+            self._access_counts.pop(victim, None)
 
     async def _initialize_embedder(self) -> bool:
         """Initialize embedder: MLX/GPU → CoreML/ANE → Numpy fallback."""
@@ -870,9 +901,11 @@ class LanceDBIdentityStore:
     async def ensure_index(self, force: bool = False) -> None:
         """Create index with respect to available RAM and thermal state."""
         try:
-            import psutil
+            from hledac.universal.utils.sys_metrics import system_memory_sync
 
-            available_gb = psutil.virtual_memory().available / 1024**3
+            available_gb = system_memory_sync().available_gib
+            if available_gb <= 0:
+                raise RuntimeError("memory probe unavailable")
             if available_gb < 1.5:
                 logger.warning("[INDEX] Critical memory (<1.5GB), skipping index build")
                 return
@@ -884,9 +917,9 @@ class LanceDBIdentityStore:
             logger.debug(f"[LANCE] memory check failed: {e}")
         if self._index_build_deferred and (not force):
             try:
-                import psutil
+                from hledac.universal.utils.sys_metrics import system_memory_sync
 
-                if psutil.virtual_memory().available / 1024**3 >= 3.0:
+                if system_memory_sync().available_gib >= 3.0:
                     self._index_build_deferred = False
             except Exception:  # noqa: BLE001
                 pass
@@ -961,12 +994,9 @@ class LanceDBIdentityStore:
     async def shutdown(self) -> None:
         """Cleanup resources."""
         global _writer_tasks, _writer_shutdown
-        for task_name in ["_cache_maintenance_task"]:
-            task = getattr(self, task_name, None)
-            if task:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+        # ISSUE#11: cancel tracked background tasks (replaces non-slotted
+        # _cache_maintenance_task handling) so they don't orphan at shutdown.
+        await self._cancel_bg_tasks()
         # M5: shutdown multi-writer pool
         if _writer_tasks:
             _writer_shutdown = True
@@ -1060,13 +1090,17 @@ class LanceDBIdentityStore:
             self._metrics["cache_misses"] += 1
             return None
         data, _ = result
+        # `data` is the embedding vector (list[float]) returned by `_sync`; the cached
+        # LMDB value stores it as float16 bytes, so re-quantize here to keep the
+        # writeback format consistent with `_store_embedding`.
+        emb_bytes = np.array(data, dtype=np.float16).tobytes()
         new_data = {
-            "embedding": data.get("embedding"),
-            "dtype": data.get("dtype", "float16"),
-            "dim": data.get("dim", 768),
-            "ttl": data.get("ttl", 86400),
-            "stored_at": data.get("stored_at", time.time()),
-            "access_count": data.get("access_count", 0) + 1,
+            "embedding": emb_bytes,
+            "dtype": "float16",
+            "dim": len(data),
+            "ttl": 86400,
+            "stored_at": time.time(),
+            "access_count": self._access_counts.get(text_hash, 0) + 1,
             "last_access": time.time(),
         }
         self._access_counts[text_hash] = self._access_counts.get(text_hash, 0) + 1
@@ -1418,9 +1452,11 @@ class LanceDBIdentityStore:
         if self._usearch_loaded or self._table is None:
             return
         try:
-            import psutil
+            from hledac.universal.utils.sys_metrics import system_memory_sync
 
-            available_gb = psutil.virtual_memory().available / 1024**3
+            available_gb = system_memory_sync().available_gib
+            if available_gb <= 0:
+                raise RuntimeError("memory probe unavailable")
             if available_gb < 4.0:
                 logger.warning(
                     f"[INDEX] M1 memory pressure ({available_gb:.1f}GB available), skipping usearch index build"
@@ -1596,7 +1632,7 @@ class LanceDBIdentityStore:
                 logger.warning("[LANCEDB] embedding field not found in existing table schema")
                 return True
             actual_list_size = getattr(emb_field.type, "list_size", None)
-            if actual_list_size != expected_dim:
+            if actual_list_size is not None and actual_list_size != expected_dim:
                 logger.error(
                     f"[LANCEDB] Schema mismatch: expected dim={expected_dim}, "
                     f"existing table has dim={actual_list_size}. "
@@ -1628,8 +1664,24 @@ class LanceDBIdentityStore:
             self.db = lancedb.connect(self.uri)
             # ISSUE-P6-008: validate schema — raises RuntimeError on dimension mismatch
             self._validate_table_schema(self._embedding_dim)
-            # Table validated, safe to open (no redundant create_table API call)
-            self._table = self.db.open_table("entities")
+            # Table validated; create on first launch (fresh DB) instead of
+            # silently disabling the store.
+            try:
+                self._table = self.db.open_table("entities")
+            except Exception as e:
+                if "TableNotFound" in type(e).__name__ or "not exist" in str(e).lower():
+                    schema = pa.schema(
+                        [
+                            pa.field("id", pa.string()),
+                            pa.field("embedding", pa.list_(pa.float32(), self._embedding_dim)),
+                            pa.field("aliases", pa.list_(pa.string())),
+                            pa.field("first_seen", pa.timestamp("us", tz="UTC")),
+                            pa.field("last_seen", pa.timestamp("us", tz="UTC")),
+                        ]
+                    )
+                    self._table = self.db.create_table("entities", schema=schema)
+                else:
+                    raise
             try:
                 list_indices_fn = getattr(self._table, "list_indices", None)
                 existing_indices = list_indices_fn() if callable(list_indices_fn) else []
@@ -2040,8 +2092,27 @@ class LanceDBIdentityStore:
             logger.error(f"[REEMBED] Failed: {e}")
         return stats
 
+    async def _cancel_bg_tasks(self) -> None:
+        """ISSUE#11: Cancel all tracked background tasks and drain them.
+
+        Prevents orphaned asyncio tasks (and their event-loop warnings / resource
+        leaks) when the store is closed. Uses return_exceptions=True so a task
+        raising during cancellation never propagates.
+        """
+        bg = getattr(self, "_bg_tasks", None)
+        if not bg:
+            return
+        tasks = list(bg)
+        for t in tasks:
+            t.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(*tasks, return_exceptions=True)
+        bg.clear()
+
     async def close(self) -> None:
         """Close database connection and cache."""
+        # ISSUE#11: cancel background task(s) so they don't orphan at exit.
+        await self._cancel_bg_tasks()
         self._writeback_buffer.clear()
         if self._mlx_embeddings is not None:
             del self._mlx_embeddings
@@ -2470,6 +2541,11 @@ class LanceDBAcademicStore:
         "_lancedb_has_fts",
         "_table",
         "_ivfpq_nprobes",
+        "_ivfpq_enabled",
+        "_ivfpq_trained",
+        "_ivfpq_lock",
+        "_ivfpq_num_partitions",
+        "_ivfpq_num_sub_vectors",
     )
 
     def __init__(self, db_path: str | None = None, dim: int = 384) -> None:
@@ -2495,6 +2571,11 @@ class LanceDBAcademicStore:
         self._lancedb_has_fts = False
         # M1 8GB IVF-PQ nprobes (same heuristic as LanceDBIdentityStore)
         self._ivfpq_nprobes: int = max(1, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NPROBES", "8"))))
+        self._ivfpq_enabled = os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "0") == "1"
+        self._ivfpq_trained = False
+        self._ivfpq_lock = asyncio.Lock()
+        self._ivfpq_num_partitions = int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_PARTITIONS", "64"))
+        self._ivfpq_num_sub_vectors = 12  # divides 384 (384 / 12 = 32)
 
     def _validate_table_schema(self, expected_dim: int) -> bool:
         """Validate existing LanceDB table schema matches expected embedding dimension.
@@ -2511,7 +2592,7 @@ class LanceDBAcademicStore:
                 logger.warning("[LANCEDB] embedding field not found in existing table schema")
                 return True
             actual_list_size = getattr(emb_field.type, "list_size", None)
-            if actual_list_size != expected_dim:
+            if actual_list_size is not None and actual_list_size != expected_dim:
                 logger.error(
                     f"[LANCEDB] Schema mismatch: expected dim={expected_dim}, "
                     f"existing table has dim={actual_list_size}. "
@@ -2538,8 +2619,30 @@ class LanceDBAcademicStore:
             return
         # ISSUE-P6-008: validate schema — raises RuntimeError on dimension mismatch
         self._validate_table_schema(self._dim)
-        # Table validated, safe to open (no redundant create_table API call)
-        self._table = self._db.open_table(AcademicPaper.TABLE_NAME)
+        # Table validated; create on first launch (fresh DB) instead of crashing.
+        try:
+            self._table = self._db.open_table(AcademicPaper.TABLE_NAME)
+        except Exception as e:
+            if "TableNotFound" in type(e).__name__ or "not exist" in str(e).lower():
+                import pyarrow as pa
+
+                schema = pa.schema(
+                    [
+                        pa.field("paper_id", pa.string()),
+                        pa.field("title", pa.string()),
+                        pa.field("abstract", pa.string()),
+                        pa.field("authors", pa.list_(pa.string())),
+                        pa.field("year", pa.int64()),
+                        pa.field("source", pa.string()),
+                        pa.field("doi", pa.string()),
+                        pa.field("url", pa.string()),
+                        pa.field("citation_count", pa.int64()),
+                        pa.field("embedding", pa.list_(pa.float32(), self._dim)),
+                    ]
+                )
+                self._table = self._db.create_table(AcademicPaper.TABLE_NAME, schema=schema)
+            else:
+                raise
         try:
             list_indices_fn = getattr(self._table, "list_indices", None)
             existing = list_indices_fn() if callable(list_indices_fn) else []
@@ -2555,6 +2658,46 @@ class LanceDBAcademicStore:
             logger.debug(f"[LANCEDB:H] Academic FTS not available: {e}")
         await self._init_embedder()
         self._initialized = True
+
+    async def _ensure_ivf_pq_index_async(self) -> None:
+        """Lazy IVF-PQ training for academic_papers (M1 8GB friendly, fail-soft).
+
+        Mirrors LanceDBIdentityStore._ensure_ivf_pq_index_async. Gated by
+        HLEDAC_LANCEDB_QUANTIZE=1. Skipped if table has < 256 rows.
+        """
+        if not getattr(self, "_ivfpq_enabled", False):
+            return
+        if self._table is None or getattr(self, "_ivfpq_trained", False):
+            return
+        async with self._ivfpq_lock:
+            if self._ivfpq_trained:
+                return
+            try:
+                row_count = self._table.count_rows()
+                if row_count < 256:
+                    self._ivfpq_trained = True
+                    return
+                num_partitions = getattr(self, "_ivfpq_num_partitions", 64)
+                num_sub_vectors = getattr(self, "_ivfpq_num_sub_vectors", 12)
+
+                def _train() -> None:
+                    self._table.create_index(
+                        metric="cosine",
+                        index_type="IVF_PQ",
+                        num_partitions=num_partitions,
+                        num_sub_vectors=num_sub_vectors,
+                        max_iterations=20,
+                    )
+
+                await asyncio.to_thread(_train)
+                self._ivfpq_trained = True
+                logger.info(
+                    f"[LANCEDB:H] Academic IVF-PQ trained: rows={row_count} "
+                    f"num_partitions={num_partitions} num_sub_vectors={num_sub_vectors}"
+                )
+            except Exception as e:
+                self._ivfpq_trained = True
+                logger.warning(f"[LANCEDB:H] Academic IVF-PQ training failed (fallback brute-force): {e}")
 
     async def _init_embedder(self) -> None:
         """Initialize embedder via MLX-first cascade.
@@ -2604,6 +2747,7 @@ class LanceDBAcademicStore:
         """
         if not self._initialized:
             await self.initialize()
+        await self._ensure_ivf_pq_index_async()
         if paper.embedding is None:
             embeddings = await self._embed_texts([paper.title + " " + paper.abstract])
             paper.embedding = embeddings[0] if embeddings else [0.0] * self._dim
@@ -2618,6 +2762,7 @@ class LanceDBAcademicStore:
         """
         if not self._initialized:
             await self.initialize()
+        await self._ensure_ivf_pq_index_async()
         if not papers:
             return
         texts = [p.title + " " + p.abstract for p in papers]
@@ -2662,6 +2807,7 @@ class LanceDBAcademicStore:
         """
         if not self._initialized:
             await self.initialize()
+        await self._ensure_ivf_pq_index_async()
         embeddings = await self._embed_texts([query])
         query_emb = embeddings[0] if embeddings else [0.0] * self._dim
         effective_qt = query_type
@@ -2751,6 +2897,7 @@ class LanceDBAcademicStore:
         """
         if not self._initialized:
             await self.initialize()
+        await self._ensure_ivf_pq_index_async()
         try:
             _nprobes = self._ivfpq_nprobes
             try:

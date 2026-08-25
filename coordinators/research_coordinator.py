@@ -649,7 +649,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Archive search results
         """
         try:
-            from hledac.universal.intel.archive_discovery import search_archives
+            from hledac.universal.recon.archive_discovery import search_archives
 
             results = await search_archives(url)
             return {

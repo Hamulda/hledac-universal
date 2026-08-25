@@ -112,7 +112,18 @@ def cached_compile(func):
         return compiled
 
     def wrapper(*args, **kwargs):
-        return func(*args, **kwargs)
+        # Inject the cached compiler into the wrapped function's namespace so
+        # that bodies referencing the bare name ``_compilecached`` resolve
+        # (the closure alone does not make it visible to the wrapped function).
+        prev = func.__globals__.get("_compilecached")
+        func.__globals__["_compilecached"] = _compilecached
+        try:
+            return func(*args, **kwargs)
+        finally:
+            if prev is None:
+                func.__globals__.pop("_compilecached", None)
+            else:
+                func.__globals__["_compilecached"] = prev
 
     return wrapper
 

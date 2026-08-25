@@ -1671,7 +1671,7 @@ class M1ResourceGovernor:
                 self._lane_pool_lock = None
         self._last_lane_util_check: float = 0.0
         # NOTE: Audit loop is NOT auto-started here anymore.
-        # CRITICAL FIX: asyncio.create_task() cannot be called before event loop starts.
+        # CRITICAL FIX: safe_create_task() cannot be called before event loop starts.
         # Call start_qos_audit() explicitly from async context after event loop is running.
 
     @property
@@ -2905,7 +2905,7 @@ class AsyncUMAGuard:
             self._hard_limit_mb = new_limit
             # Wake all waiters to re-check against new limit
             # (asyncio.Condition.notify_all requires holding the lock)
-            # [NEW-M13-FIX]: Use get_running_loop() instead of asyncio.create_task()
+            # [NEW-M13-FIX]: Use get_running_loop() instead of safe_create_task()
             # to ensure we're in an async context. This prevents RuntimeError if
             # update_hard_limit is accidentally called from sync context.
             try:
@@ -4382,7 +4382,7 @@ class QoSSubscriptionRegistry:
 
                 qos_level_obj = QoSLevel(self._last_qos_level)
                 qos_severity = qos_level_obj.severity
-    except (ValueError, AttributeError):
+            except (ValueError, AttributeError):
                 qos_severity = 0  # FULL level
 
             # Restrictive levels require active compliance
@@ -4427,7 +4427,7 @@ class QoSSubscriptionRegistry:
         if self._running:
             return
         self._running = True
-        self._audit_task = asyncio.create_task(self._audit_loop())
+        self._audit_task = safe_create_task(self._audit_loop())
         logger.info("[QoS-Sub] Health audit loop started")
 
     async def stop_audit_loop(self) -> None:

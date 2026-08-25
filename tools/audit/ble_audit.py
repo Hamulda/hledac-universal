@@ -25,12 +25,10 @@ import json
 import sys
 from pathlib import Path
 from typing import NamedTuple
+from hledac.universal.utils.optional_imports import lazy_import
 
 # TOML config — lazy import to avoid hard dependency
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore[no-redef]
+tomllib = lazy_import("tomllib", default=lazy_import("tomli"))
 
 
 class Violation(NamedTuple):

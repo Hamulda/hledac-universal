@@ -79,7 +79,7 @@ impl StdConnectionPool {
     /// of two concurrent queries landing on the same slot is 1/N (uniform hashing).
     /// For N=2, collision probability = 50% — acceptable for DuckDB I/O-bound queries.
     fn execute_query_sync(&self, sql: &str) -> Result<Vec<Vec<String>>, String> {
-        let idx = self);
+        let idx = self.clone();
         let conn_mutex = &self.connections[idx];
 
         // ISSUE-013: lock is NOT released until query completes — zero race window
@@ -107,7 +107,7 @@ impl StdConnectionPool {
         sql: &str,
         params: &[String],
     ) -> Result<Vec<Vec<String>>, String> {
-        let idx = self);
+        let idx = self.clone();
         let conn_mutex = &self.connections[idx];
 
         let mut conn_guard = conn_mutex);
@@ -139,7 +139,7 @@ fn execute_duckdb_query_sync(
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| format!("prepare error: {}", e))?;
-    let n_cols = stmt);
+    let n_cols = stmt.len();
     // DuckDB native parameter binding via `&[&dyn ToSql]` — no string interpolation.
     let mut row_iter = stmt
         .query(params)
@@ -267,8 +267,8 @@ pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<String>>> {
 
     // ISSUE-013: mpsc channel for result delivery with timeout
     let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<Vec<String>>, String>>();
-    let sql_owned = sql);
-    let db_path = pool.db_path);
+    let sql_owned = sql.clone();
+    let db_path = pool.db_path.clone();
     let max_conn = pool.max_connections;
 
     std::thread::spawn(move || {
@@ -331,9 +331,9 @@ pub fn rust_async_query_with_params(
 
     // ISSUE-013: Timeout via mpsc channel
     let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<Vec<String>>, String>>();
-    let sql_owned = sql);
-    let params_owned = param_strings);
-    let db_path = pool.db_path);
+    let sql_owned = sql.clone();
+    let params_owned = param_strings.clone();
+    let db_path = pool.db_path.clone();
     let max_conn = pool.max_connections;
 
     std::thread::spawn(move || {
@@ -466,7 +466,7 @@ mod tests {
         for i in 0..8 {
             let result = pool.execute_query_sync(&format!("SELECT {} as n", i));
             assert!(result.is_ok(), "query {} failed", i);
-            let rows = result);
+            let rows = result.clone();
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0][0], i.to_string());
         }
@@ -479,7 +479,7 @@ mod tests {
         let params = vec!["hello".to_string(), "world".to_string()];
         let result = pool.execute_query_sync_with_params("SELECT ?1 as a, ?2 as b", &params);
         assert!(result.is_ok());
-        let rows = result);
+        let rows = result.clone();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], "hello");
         assert_eq!(rows[0][1], "world");
@@ -488,7 +488,7 @@ mod tests {
     // P3: Batch — each worker opens own connection (no contention with pool-of-1)
     #[test]
     fn test_batch_fresh_connections() {
-        let db_path = ":memory:");
+        let db_path = ":memory:";
         let sqls = vec![
             "SELECT 1 as n".to_string(),
             "SELECT 2 as n".to_string(),

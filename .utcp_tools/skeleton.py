@@ -9,7 +9,7 @@ def python_skeleton(code: str) -> str:
 
 if __name__ == "__main__":
     file_path = sys.argv[1]
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
     if file_path.endswith(".py"):
         print(python_skeleton(content))

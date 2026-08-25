@@ -557,8 +557,6 @@ def shutdown_uma_callback_executor() -> None:
     this at exit now get a harmless no-op.
     """
 logger = logging.getLogger(__name__)
-if TYPE_CHECKING:
-
 def _detect_total_memory_mb() -> int:
     """Detect real system RAM. Floor 4 GB, ceil 64 GB, fallback 8 GB."""
     try:
@@ -1108,7 +1106,7 @@ class PowerStatusMonitor:
         """Získá stav napájení na Linuxu přes sysfs."""
         try:
             ac_online_path = "/sys/class/power_supply/AC/online"
-            with open(ac_online_path, "r") as f:
+            with open(ac_online_path) as f:
                 ac_online = f.read().strip() == "1"
             return {"on_battery": not ac_online, "ac_attached": ac_online, "battery_level": None, "charging": False}
         except Exception:

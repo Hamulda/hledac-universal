@@ -25,6 +25,19 @@ from hledac.universal.evidence._writer import (
     _RustMPSCBytes,
 )
 
+# ISSUE #20: EvidenceLog orchestrator + shared factory live inside the package
+# so `from hledac.universal.evidence import EvidenceLog` is the canonical path
+# and evidence_log.py is just a backward-compat façade.
+from hledac.universal.evidence._log import (
+    EvidenceLog,
+    archive_http_response_cached,
+    _normalize_payload,
+)
+from hledac.universal.evidence.shared import (
+    evidence_log_factory,
+    evidence_log_init,
+)
+
 __all__ = [
     "WarcWriteResult",
     "WARCWriter",
@@ -36,4 +49,9 @@ __all__ = [
     "_RustMPSCBytes",
     "EvidenceWriter",
     "EvidenceQuery",
+    "EvidenceLog",
+    "archive_http_response_cached",
+    "_normalize_payload",
+    "evidence_log_factory",
+    "evidence_log_init",
 ]

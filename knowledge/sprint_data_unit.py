@@ -66,8 +66,6 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 logger = _logging.getLogger(__name__)
 from hledac.universal.compat.msgspec_gc_compat import Struct
-if TYPE_CHECKING:
-
 class ProvenanceProtocol(Enum):
     """Supported source protocols for provenance tracking."""
     HTTP = 'http'

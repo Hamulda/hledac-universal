@@ -46,6 +46,7 @@ class PipelinePageResult(Struct, frozen=True):
     terminal_reason: str | None = None
     public_surface_dup: bool = False
     build_attempted: bool = False
+    dual_engine_iocs: int = 0
 
 
 class PipelineRunResult(Struct, frozen=True):

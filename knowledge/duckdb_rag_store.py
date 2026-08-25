@@ -414,7 +414,7 @@ class DuckDBRAGStore:
             "ts": ts_val,
         }
         # Immediate upsert — track task so close() can await pending writes
-        task = asyncio.create_task(self._upsert_text_async(finding_id, text, metadata))
+        task = safe_create_task(self._upsert_text_async(finding_id, text, metadata))
         async with self._pending_lock:
             self._pending_tasks.append(task)
         task.add_done_callback(self._make_pending_done_callback())

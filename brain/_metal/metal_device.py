@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-if TYPE_CHECKING:
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
 @dataclass(frozen=True, slots=True)

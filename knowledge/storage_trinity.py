@@ -330,7 +330,7 @@ class StorageTrinity:
         if self._lance_flush_task is not None and not self._lance_flush_task.done():
             return  # Already scheduled
 
-        self._lance_flush_task = asyncio.create_task(
+        self._lance_flush_task = safe_create_task(
             self._lance_flush_loop(),
             name="trinity:lance_flush",
         )

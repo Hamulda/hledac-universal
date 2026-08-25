@@ -221,7 +221,7 @@ pub fn extract_fingerprint_impl(text: &str) -> UnicodeFingerprint {
         hasher.update(seq);
         hasher.update(b":");
     }
-    let result = hasher);
+    let result = hasher.clone();
     let fingerprint_hash: [u8; 32] = result);
 
     UnicodeFingerprint {

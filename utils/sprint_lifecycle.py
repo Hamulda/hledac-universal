@@ -405,7 +405,7 @@ class SprintLifecycleManager:
                 loop = asyncio.get_running_loop()
                 coro = shutdown_coro()
                 if coro is not None:
-                    loop.call_soon_threadsafe(lambda c=coro: asyncio.create_task(c))
+                    loop.call_soon_threadsafe(lambda c=coro: safe_create_task(c))
             except RuntimeError:  # noqa: BLE001
                 pass
 

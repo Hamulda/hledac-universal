@@ -31,7 +31,7 @@ async def wayback_cdx_lookup(url_or_host: str, limit: int = 10, timeout_s: float
     AUTHORITY: archive_discovery.wayback_cdx_lookup() je canonical.
     DEPRECATION: TECH-DEBT-001 — pending removal after fetch_coordinator migration.
     """
-    from hledac.universal.intel.archive_discovery import (
+    from hledac.universal.recon.archive_discovery import (
         wayback_cdx_lookup as _canonical_lookup,
     )
 

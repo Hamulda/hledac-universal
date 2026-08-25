@@ -17,10 +17,10 @@ import asyncio
 import logging
 import secrets
 import time
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import field
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
 import httpx
@@ -36,12 +36,58 @@ from hledac.universal.transport.http3_lane import fetch_http3_aioquic, is_dark_w
 
 from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
 from ..utils.lru_cache import LRUCache
+from ..utils.asyncx import _check_gathered
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
 
 logger = logging.getLogger(__name__)
 
 # Crypto-safe jitter — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
+
+# ISSUE #14: batch-level exponential jitter (replaces per-request fixed jitter).
+# Emulates tenacity.wait_exponential_jitter without adding a runtime dependency.
+_BATCH_JITTER_MIN_S: float = 0.05
+_BATCH_JITTER_MAX_S: float = 0.5
+_BATCH_JITTER_MEAN_S: float = (_BATCH_JITTER_MIN_S + _BATCH_JITTER_MAX_S) / 2.0
+
+# Strong references for background tasks (AGENTS invariant #3-safe) so an
+# unreferenced asyncio task is not garbage-collected before it runs.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+class StealthJob(NamedTuple):
+    """A single stealth execution unit for :meth:`StealthManager.execute_batch`.
+
+    Holds the coroutine to run plus its stealth context (target domain and an
+    optional per-request timeout). A NamedTuple keeps jobs immutable and
+    allocation-cheap on M1 8GB.
+    """
+
+    coro: Coroutine[Any, Any, Any]
+    domain: str = "default"
+    timeout: float | None = None
+
+
+def _is_blitz() -> bool:
+    """Lazy blitz-mode check (F350M-R) — avoids eager telemetry import."""
+    from hledac.universal._core.telemetry.context_state import is_blitz_mode
+
+    return is_blitz_mode()
+
+
+def _batch_jitter_delay() -> float:
+    """Single global jitter for a whole batch (decorrelated exponential).
+
+    One draw per batch — never per-request — so N concurrent jobs pay the
+    anti-correlation cost once instead of N times.
+    """
+    if _is_blitz():
+        return 0.0
+    delay = _JITTER_RNG.expovariate(1.0 / _BATCH_JITTER_MEAN_S)
+    # Decorrelate: add symmetric uniform noise so identical exponential draws
+    # don't align requests sent in the same event-loop tick.
+    delay += _JITTER_RNG.uniform(-_BATCH_JITTER_MIN_S, _BATCH_JITTER_MIN_S)
+    return min(_BATCH_JITTER_MAX_S, max(_BATCH_JITTER_MIN_S, delay))
 
 STEALTH_MANAGER_TRANSPORT_AUTHORITY = "local_stealth_pool_until_transport_unified"
 STEALTH_MANAGER_PHASE = "phase2_breaker_seam"
@@ -200,7 +246,11 @@ class StealthManager:
         self, coro: Coroutine[Any, Any, Any], domain: str = "default", timeout: float | None = None
     ) -> Any:
         """
-        Execute request with full stealth protection.
+        Execute a single request with full stealth protection.
+
+        Thin wrapper over :meth:`_execute_one` (kept for backward compat and
+        the ``with_stealth`` helper). For fan-out over many requests use
+        :meth:`execute_batch`.
 
         Args:
             coro: Coroutine to execute
@@ -210,6 +260,15 @@ class StealthManager:
         Returns:
             Result of coroutine
         """
+        return await self._execute_one(StealthJob(coro=coro, domain=domain, timeout=timeout))
+
+    async def _execute_one(self, job: StealthJob) -> Any:
+        """Run one :class:`StealthJob` with rate-limit, timeout, and stats.
+
+        Shared by :meth:`execute` and :meth:`execute_batch`. Fail-safe: any
+        error is recorded in domain stats and re-raised (never swallowed).
+        """
+        domain = job.domain
         if self.rate_limiter:
             try:
                 await self.rate_limiter.acquire(domain)
@@ -217,11 +276,11 @@ class StealthManager:
                 logger.warning(f"Rate limit exceeded for {domain}")
                 raise
         try:
-            if timeout:
-                async with asyncio.timeout(timeout):
-                    result = await coro
+            if job.timeout:
+                async with asyncio.timeout(job.timeout):
+                    result = await job.coro
             else:
-                result = await coro
+                result = await job.coro
             self._success_count += 1
             stats = self._domain_stats.get(domain)
             if stats is None:
@@ -239,6 +298,61 @@ class StealthManager:
                 logger.warning(f"Request failed, backing off: {e}")
                 await asyncio.sleep(2.0)
             raise
+
+    async def execute_batch(
+        self,
+        jobs: list[StealthJob],
+        *,
+        global_jitter: bool = True,
+        circuit_rotation_hook: Callable[[], Awaitable[None]] | None = None,
+    ) -> list[Any]:
+        """Execute many stealth jobs concurrently within one session (ISSUE #14).
+
+        Cutting-edge batching model:
+
+        * **Single global jitter** — :func:`_batch_jitter_delay` is applied
+          once for the whole batch instead of per-request, so N concurrent
+          jobs pay the anti-correlation cost exactly once.
+        * **Concurrent fan-out** — jobs run via
+          ``asyncio.gather(..., return_exceptions=True)`` (AGENTS invariant #1).
+        * **Non-blocking circuit rotation** — an optional
+          ``circuit_rotation_hook`` (e.g. Tor NEWNYM renewal) is fired as a
+          background ``asyncio.create_task`` and never stalls the batch.
+        * **Fail-safe** — individual job failures are preserved as exception
+          objects in the returned list (1:1 with ``jobs``), not raised.
+
+        Args:
+            jobs: Stealth jobs to execute.
+            global_jitter: Apply one batch-level jitter before fan-out.
+            circuit_rotation_hook: Optional awaitable run in the background.
+
+        Returns:
+            List aligned 1:1 with ``jobs``; elements are results or exceptions.
+        """
+        if not jobs:
+            return []
+        if global_jitter:
+            await asyncio.sleep(_batch_jitter_delay())
+        if circuit_rotation_hook is not None and not _is_blitz():
+            task = safe_create_task(
+                self._run_circuit_rotation(circuit_rotation_hook),
+                name="stealth:circuit-rotation",
+            )
+            task.add_done_callback(_BG_TASKS.discard)
+            _BG_TASKS.add(task)
+        results = await asyncio.gather(
+            *(self._execute_one(job) for job in jobs),
+            return_exceptions=True,
+        )
+        _check_gathered(list(results), logger_instance=logger, ctx="StealthManager.execute_batch")
+        return list(results)
+
+    async def _run_circuit_rotation(self, hook: Callable[[], Awaitable[None]]) -> None:
+        """Background circuit-rotation task — fails soft (AGENTS invariant #10)."""
+        try:
+            await hook()
+        except Exception:  # noqa: BLE001 — fail-safe, never crash the batch
+            logger.debug("stealth circuit-rotation hook failed", exc_info=True)
 
     @asynccontextmanager
     async def session(self):
@@ -386,13 +500,17 @@ class StealthManager:
             self._cb_fallbacks += 1
             return (True, None)
 
-    async def close(self) -> None:
-        """Cleanup resources"""
-        logger.info("Closing StealthManager...")
-        # D-19: _sessions block removed — was dead code, never populated
-        if hasattr(self, "_domain_stats"):
-            self._domain_stats.clear()
-        logger.info("✓ StealthManager closed")
+async def close(self) -> None:
+    """Cleanup resources"""
+    logger.info("Closing StealthManager...")
+    # D-19: _sessions block removed — was dead code, never populated
+    if hasattr(self, "_domain_stats"):
+        self._domain_stats.clear()
+    # Cancel any in-flight background circuit-rotation tasks (see execute_batch).
+    for _t in list(_BG_TASKS):
+        _t.cancel()
+    _BG_TASKS.clear()
+    logger.info("✓ StealthManager closed")
 
 
 class SkipFetch(Exception):
@@ -499,12 +617,25 @@ class StealthSession:
         return await fetch_http3_aioquic(url=url, headers=headers)
 
     async def _get_session(self) -> httpx.AsyncClient:
-        """Lazy initialization of shared httpx.AsyncClient with TCP tuning."""
-        if self._session is None or self._session.is_closed:
-            timeout = httpx.Timeout(
-                connect=DEFAULT_CONNECT_TIMEOUT, read=DEFAULT_READ_TIMEOUT, write=DEFAULT_TOTAL_TIMEOUT
-            )
-            self._session = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+        """
+        Get the process-wide pooled ``stealth`` httpx client.
+
+        ISSUE #8 FIX: this used to build one ``httpx.AsyncClient`` per
+        ``StealthSession``, inheriting httpx DEFAULT limits
+        (``max_connections=100``, ``max_keepalive_connections=20``). With N
+        concurrent stealth sessions that is up to N*100 sockets — guaranteed FD
+        exhaustion on M1 8GB, where ``ulimit -n`` defaults to 256.
+
+        The pooled ``stealth`` profile pins hard M1-safe limits
+        (4 connections / 2 keep-alive) and enables HTTP/2, so repeated hits on
+        the same target multiplex onto one connection.
+
+        [CP-4] The returned client is SHARED — ``close()`` must not aclose it.
+        Per-request overrides (e.g. ``timeout=``) remain available at call sites.
+        """
+        from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
+        self._session = await get_or_create_httpx_client("stealth")
         return self._session
 
     def get_headers(self, domain: str = "default") -> dict[str, str]:
@@ -928,12 +1059,18 @@ class StealthSession:
             logger.warning(f"Tor identity rotation failed: {e}")
 
     async def close(self) -> None:
-        """Close session and cleanup."""
+        """
+        Release this session's reference and cleanup.
+
+        ISSUE #8: the httpx client is now the shared pooled ``stealth`` client
+        owned by ``transport/client_pool.py``. Calling ``aclose()`` here would
+        tear down connections still in use by every other StealthSession
+        [CP-4]; we only drop our reference. The client itself is closed at
+        transport winddown via ``close_all_clients()``.
+        """
         self._closed = True
-        if self._session and (not self._session.is_closed):
-            await self._session.aclose()
-            self._session = None
-        logger.debug("StealthSession closed")
+        self._session = None
+        logger.debug("StealthSession closed (pooled stealth client retained)")
 
 
 class HostTelemetry:

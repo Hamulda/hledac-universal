@@ -92,22 +92,36 @@ class BuildStage:
                 matched_batch.matched_pattern_labels[i] if i < len(matched_batch.matched_pattern_labels) else []
             )
             error = matched_batch.errors[i] if i < len(matched_batch.errors) else None
-
-            # Skip pages with no matches or errors
+            ioc_list = matched_batch.iocs[i] if (i < len(matched_batch.iocs)) else []
+    
+            # Skip pages with errors, or with neither pattern matches nor dual-engine IOCs.
             if error:
                 telemetry["findings_filtered"] += 1
                 continue
-            if pattern_count == 0:
+            if pattern_count == 0 and not ioc_list:
                 telemetry["findings_filtered"] += 1
                 continue
-
+    
             try:
+                # Merge dual-engine CanonicalIOCs into the finding's label set so
+                # NER-only attributions (ORG/PERSON/GPE/PRODUCT) surface as findings.
+                labels = list(pattern_labels)
+                for _ioc in ioc_list:
+                    labels.append(f"{_ioc.ioc_type}:{_ioc.value}")
+                best_ioc_conf = max((_ioc.confidence for _ioc in ioc_list), default=0.0)
+                confidence = min(
+                    max(self._default_confidence + (pattern_count * 0.01), best_ioc_conf),
+                    1.0,
+                )
+                # NER-only pages (no pattern match) are attributed to the dual engine.
+                source_type = self._source_type
+                if ioc_list and pattern_count == 0:
+                    source_type = f"{self._source_type}:ner"
                 finding_id = _make_finding_id(url, query_context)
                 timestamp = time.time()
-                confidence = min(self._default_confidence + (pattern_count * 0.01), 1.0)
-                payload = _encode_payload(url, pattern_labels)
+                payload = _encode_payload(url, labels)
                 raw_payload = _encode_raw_payload(url)
-
+    
                 finding_ids.append(finding_id)
                 urls.append(url)
                 titles.append("")  # filled from matched_batch if available
@@ -115,12 +129,12 @@ class BuildStage:
                 query_contexts.append(str(query_context))
                 timestamps.append(timestamp)
                 confidences.append(confidence)
-                source_types.append(self._source_type)
+                source_types.append(source_type)
                 payloads.append(payload)
                 raw_payloads.append(raw_payload)
-                matched_pattern_labels.append(pattern_labels)
+                matched_pattern_labels.append(labels)
                 telemetry["findings_built"] += 1
-
+    
             except Exception as exc:
                 telemetry["build_errors"] += 1
                 logger.warning(f"Build failed for {url}: {exc}")

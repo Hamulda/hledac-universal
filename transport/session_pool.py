@@ -714,6 +714,16 @@ class SessionPool:
         except Exception as e:
             results["curl_cffi"] = f"error: {e}"
 
+        # ISSUE #8: the `stealth` profile client is owned by client_pool.
+        # Lazy import avoids a module-level import cycle (client_pool -> session_pool).
+        try:
+            from .client_pool import close_stealth_client
+
+            await close_stealth_client()
+            results["stealth"] = "closed"
+        except Exception as e:  # noqa: BLE001 — teardown must not raise
+            results["stealth"] = f"error: {e}"
+
         return results
 
     def get_status(self) -> dict[str, Any]:

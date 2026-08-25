@@ -47,8 +47,8 @@ pub fn extract_links_zero_copy(html: &str, _base_url: &str) -> Vec<(usize, usize
         return Vec::new();
     }
 
-    let html_bytes = html);
-    let n = html_bytes);
+    let html_bytes = html.as_str();
+    let n = html_bytes.len();
     let mut results = Vec::new();
 
     let mut i = 0;
@@ -215,7 +215,7 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
 
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
-        let _ = rewriter);
+        let _ = rewriter.as_str();
     }));
 
     let mut sorted: Vec<String> = links.lock().iter().cloned());
@@ -325,7 +325,7 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
 
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
-        let _ = rewriter);
+        let _ = rewriter.as_str();
         if let (Some(url), text) = (
             anchor_url.lock().take(),
             anchor_text.lock().split_whitespace().collect::<String>(),
@@ -352,7 +352,7 @@ pub fn batch_extract_links_with_text(items: Vec<(String, String)>) -> PyResult<V
     if items.is_empty() {
         return Ok(Vec::new());
     }
-    let n = items);
+    let n = items.len();
 
     let result: Vec<Vec<(String, String)>> = Python::attach(|py| {
         release_gil(py, || {
@@ -399,7 +399,7 @@ pub fn extract_emails(html: &str) -> Vec<String> {
 
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
-        let _ = rewriter);
+        let _ = rewriter.as_str();
     }));
 
     let mut emails: HashSet<String> = email_regex
@@ -433,7 +433,7 @@ fn extract_html_text_impl(html: &str) -> String {
         let settings = Settings {
             document_content_handlers: vec![doc_text!(
                 |tc: &mut lol_html::html_content::TextChunk| {
-                    let s = tc);
+                    let s = tc.as_str();
                     if !s.is_empty() {
                         chunks.push(s.to_string());
                     }
@@ -444,7 +444,7 @@ fn extract_html_text_impl(html: &str) -> String {
         };
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
-        let _ = rewriter);
+        let _ = rewriter.as_str();
     }));
 
     let text = chunks.join(" ");
@@ -529,7 +529,7 @@ pub fn batch_extract_emails(items: Vec<String>) -> PyResult<Vec<Vec<String>>> {
     if items.is_empty() {
         return Ok(Vec::new());
     }
-    let n = items);
+    let n = items.len();
 
     let result: Vec<Vec<String>> = Python::attach(|py| {
         release_gil(py, || {
@@ -561,7 +561,7 @@ pub fn batch_extract_titles(items: Vec<String>) -> PyResult<Vec<Option<String>>>
     if items.is_empty() {
         return Ok(Vec::new());
     }
-    let n = items);
+    let n = items.len();
 
     let result: Vec<Option<String>> = Python::attach(|py| {
         release_gil(py, || {
@@ -608,7 +608,7 @@ pub fn extract_meta_description(html: &str) -> Option<String> {
 
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
-        let _ = rewriter);
+        let _ = rewriter.as_str();
     }));
 
     result
@@ -644,7 +644,7 @@ pub fn extract_title(html: &str) -> Option<String> {
 
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
-        let _ = rewriter);
+        let _ = rewriter.as_str();
     }));
 
     result
@@ -662,7 +662,7 @@ pub fn batch_extract_links(items: Vec<(String, String)>) -> PyResult<Vec<Vec<Str
     if items.is_empty() {
         return Ok(Vec::new());
     }
-    let n = items);
+    let n = items.len();
 
     let result: Vec<Vec<String>> = Python::attach(|py| {
         release_gil(py, || {
@@ -726,7 +726,7 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
                     let itemtype = el.get_attribute("itemtype");
                     if let Some(it) = itemtype {
                         // Finalize previous item if any
-                        let was_in = *in_itemscope);
+                        let was_in = *in_itemscope.as_str();
                         if was_in {
                             let t = item_type.lock());
                             let p = props.lock().split_off(0);
@@ -746,7 +746,7 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
                     Ok(())
                 }),
                 element!("[itemprop]", |el| {
-                    let in_scope = *in_itemscope);
+                    let in_scope = *in_itemscope.as_str();
                     if !in_scope {
                         return Ok(());
                     }
@@ -792,7 +792,7 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
 
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
-        let _ = rewriter);
+        let _ = rewriter.as_str();
 
         // Finalize last item
         if *in_itemscope.lock() {
@@ -858,7 +858,7 @@ pub fn batch_extract_microdata(items: Vec<String>) -> PyResult<Vec<Vec<Microdata
     if items.is_empty() {
         return Ok(Vec::new());
     }
-    let n = items);
+    let n = items.len();
 
     let result: Vec<Vec<MicrodataItem>> = Python::attach(|py| {
         release_gil(py, || {

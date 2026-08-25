@@ -6,6 +6,7 @@ Sprint 48: Async LMDB operations via executor, orjson serialization
 """
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging

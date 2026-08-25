@@ -26,7 +26,7 @@ PATTERN SELECTION GUIDE
 
 MIGRATION PATH
 --------------
-Old: asyncio.create_task(coro) in a set/collection
+Old: safe_create_task(coro) in a set/collection
 New: BoundedTaskSet.spawn(coro) — semaphore prevents overload
 
 DEPRECATION (F320-B4)
@@ -147,11 +147,11 @@ class BoundedTaskSet:
             t = asyncio.current_task()
             if t is not None:
                 return t
-            t = asyncio.create_task(asyncio.sleep(0))
+            t = safe_create_task(asyncio.sleep(0))
             t.cancel()
             return t
         await self._sem.acquire()
-        task = asyncio.create_task(coro, name=name or "bounded_taskset:anon")
+        task = safe_create_task(coro, name=name or "bounded_taskset:anon")
         task_name = task.get_name()
         async with self._lock:
             self._tasks[task] = task_name

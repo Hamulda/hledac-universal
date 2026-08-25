@@ -438,7 +438,9 @@ def _build_hits_from_raw(
     Used by stale-cache fallback path. Returns (hits, raw_count) where raw_count
     is the total certs before filtering (diagnostic signal, not accepted evidence).
     """
-    seen_domains: set[str] = set()
+    # M-2026-FIX: bounded RBF for URL dedup (was unbounded set[str]).
+    from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+    seen_domains: RotatingBloomFilter = RotatingBloomFilter(max_elements=200_000, error_rate=0.005)
     hits: list[DiscoveryHit] = []
     now = time.time()
     raw_count = len(raw_data) if isinstance(raw_data, list) else 0
@@ -946,7 +948,9 @@ def _parse_cert_data(data: list, query: str, elapsed: float) -> tuple[DiscoveryB
         )
 
     raw_count = len(data)
-    seen_domains: set[str] = set()
+    # M-2026-FIX: was unbounded set[str] — bounded RBF keeps memory in check.
+    from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+    seen_domains: RotatingBloomFilter = RotatingBloomFilter(max_elements=200_000, error_rate=0.005)
     hits: list[DiscoveryHit] = []
     now = time.time()
 

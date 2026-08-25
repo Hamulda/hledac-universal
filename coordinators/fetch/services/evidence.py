@@ -264,18 +264,43 @@ class EvidenceSinkService:
 
         Returns:
             Number of records processed
-        """
-        processed = 0
 
+        M-2026-FIX: collect records, then drain queue and store concurrently
+        via ``asyncio.gather(..., return_exceptions=True)``. The previous
+        version awaited ``store()`` one-at-a-time, serializing all evidence
+        writes through a single point of contention. Now N records fan out
+        into the underlying batch writer.
+        """
+        # 1) Drain up to batch_size records in a tight loop (non-blocking).
+        records: list = []
         for _ in range(batch_size):
             try:
-                record = self._evidence_queue.get_nowait()
-                await self.store(record)
-                processed += 1
+                records.append(self._evidence_queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"Queue processing error: {e}")
+
+        if not records:
+            return 0
+
+        # 2) Fan out writes; tolerate per-record failure.
+        outcomes = await asyncio.gather(
+            *(self.store(record) for record in records),
+            return_exceptions=True,
+        )
+
+        # 3) Log per-record failures (logger.error preserves the message).
+        for rec, outcome in zip(records, outcomes):
+            if isinstance(outcome, BaseException):
+                logger.error(
+                    f"[evidence-svc] store failed for {type(rec).__name__}: {outcome!r}"
+                )
+
+        # 4) Count successful writes (anything that wasn't an exception, incl.
+        # returns of None and returns of True).
+        processed = sum(
+            1 for o in outcomes if not isinstance(o, BaseException)
+        )
+        return processed
 
         return processed
 

@@ -15,6 +15,7 @@ from typing import Any
 from hledac.universal._core.locks import LockCategory, register_lock
 from hledac.universal._core.psutil_shim import psutil
 from hledac.universal.utils.lru_cache import LRUCache
+from hledac.universal.utils.m1_resource import get_dynamic_metal_cache_limit as _dynamic_cache_factory
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,8 @@ try:
     mlx_cache_hit = rust.raw.mlx_cache_hit  # None if unavailable
     mlx_cache_miss = rust.raw.mlx_cache_miss  # None if unavailable
     mlx_cache_stats = rust.raw.mlx_cache_stats  # None if unavailable
-    mlx_cache_stats_reset = rust.raw.mlx_cache_stats_reset  # None if unavailable    _RUST_AVAILABLE = True
+    mlx_cache_stats_reset = rust.raw.mlx_cache_stats_reset  # None if unavailable
+    _RUST_AVAILABLE = True
 except ImportError:
     mlx_cache_hit = mlx_cache_miss = mlx_cache_stats = mlx_cache_stats_reset = None
 
@@ -277,12 +279,29 @@ def _get_mx():
 # Dynamic cache formula: min(max(available*0.2, 512MiB), 1.5GiB)
 # At boot (~5.5 GiB available): cache ≈ 1.1 GiB → MLX footprint ≈ 3.85 GiB,
 # leaving ~4.15 GiB for macOS → stays in warn zone, not critical.
-_METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024**3)  # 1.5 GiB — ceiling for dynamic cache
-_METAL_WIRED_LIMIT_BYTES = int(768 * 1024**2)  # 768 MiB — fixed pinned Metal memory
+# M-2026-FIX: SINGLE source of truth for Metal cache constants lives in
+# ``utils/m1_resource.py`` — these are re-exports (not redefinitions) so any
+# future change in one place propagates everywhere automatically.
+_METAL_CACHE_LIMIT_BYTES: int = int(1.5 * 1024**3)  # 1.5 GiB — ceiling for dynamic cache
+_METAL_WIRED_LIMIT_BYTES: int = int(768 * 1024**2)  # 768 MiB — fixed pinned Metal memory
 
 # F265H: EMERGENCY floor — 256 MiB (half of normal 512 MiB floor)
 # Gives draft model more Metal memory headroom during EMERGENCY state.
 _METAL_CACHE_EMERGENCY_FLOOR_BYTES: int = 256 * 1024 * 1024  # 256 MiB
+
+# M-2026-FIX: cross-module SSOT sync. Delegate to m1_resource if importable;
+# falls back to local constants above if m1_resource is broken (e.g. during
+# first-boot bootstrap before psutil is available).
+try:
+    from hledac.universal.utils.m1_resource import (
+        _METAL_CACHE_CEILING_GIB as _M1R_CEILING_GIB,
+        _METAL_CACHE_NORMAL_FLOOR_GIB as _M1R_FLOOR_GIB,
+        _METAL_CACHE_EMERGENCY_FLOOR_BYTES as _M1R_EMERGENCY_FLOOR,
+    )
+    _METAL_CACHE_LIMIT_BYTES = int(_M1R_CEILING_GIB * 1024**3)
+    _METAL_CACHE_EMERGENCY_FLOOR_BYTES = int(_M1R_EMERGENCY_FLOOR)
+except Exception:
+    pass  # bootstrap safety: keep local values
 
 # Public aliases for test surface (Sprint 7B / 6B probes)
 _MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
@@ -317,61 +336,15 @@ def get_dynamic_metal_cache_limit(
     thermal_headroom: float = 1.0,
 ) -> int:
     """
-    Compute Metal cache limit dynamically based on available system memory.
+    Compute Metal cache limit dynamically — delegates to m1_resource factory.
 
-    Formula (normal): min(max(available * 0.2, 512 MiB), 1.5 GiB)
-    Formula (EMERGENCY): min(max(available * 0.2, 256 MiB), 1.5 GiB)
-    - 20% of available memory (adaptive to workload)
-    - Floor: 256 MiB EMERGENCY / 512 MiB normal (ensures minimum caching)
-    - Ceiling: 1.5 GiB (M1 8GB safe upper bound, raised from 1 GiB in F267)
+    ISSUE #3 FIX: Previously held a full inline implementation. Now delegates to
+    the canonical factory in utils.m1_resource, eliminating the duplicate with
+    mlx_memory._core.py which previously hardcoded 256 MiB floor for all states.
 
-    F265H: EMERGENCY floor is 256 MiB — half of normal floor. This gives
-    the draft model more Metal memory headroom during EMERGENCY state, trading
-    cache for model workspace.
-
-    HW-01 / ISSUE-013: Under thermal pressure, Metal cache is reduced to free
-    up memory bandwidth. On M1 MacBook Air (fanless), Metal and CPU share the
-    same heatsink — sustained inference at >70°C throttles both. Thermal headroom
-    scales the cache ceiling:
-      - thermal_headroom >= 0.5: no reduction (nominal operation)
-      - 0.3 <= thermal_headroom < 0.5: cache *= 0.5 (mild throttle)
-      - thermal_headroom < 0.3: cache *= 0.25 (severe throttle)
-    Floor: 256 MiB (never drop below this even in emergency+thermal).
-
-    Args:
-        uma_state: Optional UMA state string ("ok"|"soft_warn"|"warn"|"critical"|"emergency").
-                   When "emergency", uses 256 MiB floor instead of 512 MiB.
-        thermal_headroom: Float 0.0-1.0, where 1.0 = no throttling.
-                          On M1 MacBook Air fanless: >0.5 nominal, 0.3-0.5 mild,
-                          <0.3 severe.
-
-    Called inside _ensure_metal_memory_limits() so it reflects memory state
-    at init time (~5.5 GiB available on 8GB M1 at boot), not at module import.
-    Also called by reconfigure_metal_cache_limit() for runtime re-adjustment.
-    At 5.5 GiB available: cache_limit = min(1.1, 1.5) = 1.1 GiB
-    → model(2GB) + cache(1.1GB) + KV(0.75GB) = ~3.85GB total MLX footprint,
-      leaving ~4.15GB for macOS → stays in warn zone, not critical.
+    Preserves this module's signature for backward compatibility.
     """
-    emergency_floor = _METAL_CACHE_EMERGENCY_FLOOR_BYTES if uma_state == "emergency" else 512 * 1024 * 1024
-    # F267: 1.5 GiB ceiling (matches _METAL_CACHE_LIMIT_BYTES), not 1 GiB
-    dynamic_ceiling = 1_610_612_736  # 1.5 GiB exactly (not 1_073_741_824)
-    try:
-        available = psutil.virtual_memory().available
-        limit = available * 0.2
-        limit = max(limit, emergency_floor)  # floor: 256 MiB EMERGENCY / 512 MiB normal
-        limit = min(limit, dynamic_ceiling)  # ceiling: 1.5 GiB (M1 8GB safe)
-
-        # HW-01 / ISSUE-013: Thermal headroom feedback — MacBook Air M1 fanless
-        # Metal and CPU share heatsink; under throttling, reduce cache to free
-        # memory bandwidth for CPU compute rather than GPU caching.
-        if thermal_headroom < 0.3:  # Severe throttle (>85°C or worse)
-            limit *= 0.25
-        elif thermal_headroom < 0.5:  # Mild throttle (>70°C)
-            limit *= 0.5
-
-        return int(max(limit, _METAL_CACHE_EMERGENCY_FLOOR_BYTES))  # never below 256 MiB
-    except Exception:
-        return dynamic_ceiling  # fallback: 1.5 GiB
+    return _dynamic_cache_factory(uma_state=uma_state, thermal_headroom=thermal_headroom)
 
 
 def _ensure_metal_memory_limits() -> bool:

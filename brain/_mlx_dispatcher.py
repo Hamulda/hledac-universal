@@ -369,7 +369,7 @@ class AsyncEmbeddingBatcher:
         if self._started:
             return
         self._started = True
-        self._loop_task = asyncio.create_task(self._batch_loop())
+        self._loop_task = safe_create_task(self._batch_loop())
 
     async def stop(self) -> None:
         if not self._started:

@@ -41,6 +41,9 @@ from operator import attrgetter
 from pathlib import Path
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal.forensics.ioc_patterns_generated import (
+    _IOC_PATTERNS as _CANONICAL_IOC_PATTERNS,
+)
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
@@ -210,8 +213,8 @@ class _NERPersistentWorker:
                     if not self._closed:
                         logger.warning(f"NER worker stdout reader died: {e}")
 
-            self._stderr_task = asyncio.create_task(_read_stderr())
-            self._reader_task = asyncio.create_task(_read_stdout())
+            self._stderr_task = safe_create_task(_read_stderr())
+            self._reader_task = safe_create_task(_read_stdout())
 
             # Wait for READY signal with timeout
             try:
@@ -346,15 +349,19 @@ class _NERPersistentWorker:
         self.close()
         if self._reader_task:
             try:
-                await asyncio.wait_for(asyncio.shield(self._reader_task), timeout=3.0)
-            except TimeoutError, asyncio.CancelledError:  # noqa: BLE001
+                await asyncio.wait_for(self._reader_task, timeout=3.0)
+            except TimeoutError:
+                self._reader_task.cancel()
+            except asyncio.CancelledError:
                 pass
             self._reader_task = None
 
         if self._stderr_task:
             try:
-                await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=3.0)
-            except TimeoutError, asyncio.CancelledError:  # noqa: BLE001
+                await asyncio.wait_for(self._stderr_task, timeout=3.0)
+            except TimeoutError:
+                self._stderr_task.cancel()
+            except asyncio.CancelledError:
                 pass
             self._stderr_task = None
 
@@ -718,7 +725,7 @@ class NEREngine:
         try:
             import outlines
 
-            from compat.msgspec_gc_compat import Struct
+
 
             class EntityList(Struct):
                 entities: list[dict]
@@ -1124,6 +1131,31 @@ def get_extraction_status() -> dict:
     }
 
 
+def _is_ner_available() -> bool:
+    """Capability gate for dual-engine NER (``Capability.NER_MODEL``).
+
+    Returns ``True`` only when an NER backend is actually usable:
+      * the GLiNER/Transformer model is already loaded, or
+      * spaCy + ``en_core_web_sm`` is loadable, or
+      * ``spacy``/``transformers`` are importable (lazy attempt on first use).
+
+    Fail-safe: returns ``False`` on any error → Rust regex only.
+    """
+    try:
+        engine = _default_engine
+        if engine is not None and getattr(engine, "is_loaded", False):
+            return True
+        if _get_spacy() is not None:
+            return True
+        from hledac.universal._core.capabilities import CAPS
+
+        if CAPS.is_available("spacy") or CAPS.is_available("transformers"):
+            return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 import math as _math
 import re as _re
 
@@ -1151,15 +1183,19 @@ _GUESS_PATTERNS: tuple[tuple[_re.Pattern, str], ...] = (
     (_re.compile("\\b(?:St|Street|City|Town|Country|Road|Ave|Boulevard)\\b", _re.IGNORECASE), "location"),
     (_re.compile("\\b[A-Fa-f0-9]{32,64}\\b"), "hash"),
 )
-_IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [
-    ("cve", _re.compile("\\bCVE-\\d{4}-\\d{4,7}\\b")),
-    ("sha256", _re.compile("\\b[0-9a-fA-F]{64}\\b")),
-    ("md5", _re.compile("\\b[0-9a-fA-F]{32}\\b")),
-    ("sha1", _re.compile("\\b[0-9a-fA-F]{40}\\b")),
-    ("email", _re.compile("\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Z|a-z]{2,}\\b")),
-    ("url", _re.compile('https?://[^\\s<>"{}|\\\\^`\\[\\]]+')),
-    ("ipv4", _re.compile("\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b")),
-    ("ipv6", _re.compile("\\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\\b")),
+# M5 FIX: IOC regex patterns must match the canonical Rust source
+# (rust_extensions/src/ioc_patterns.rs). Import the generated Python patterns
+# (single source of truth) instead of hardcoding. The generated module's `url`
+# entry has drifted from the canonical URL_PAT (codegen can't serialize the
+# quote-containing pattern in a raw string), so it is pinned to the canonical
+# value here. `domain` is excluded — it is matched separately via _DOMAIN_PAT +
+# TLD denylist below.
+_CANONICAL_URL = "https?://[^\\s<>\"']+"
+
+_IOC_PATTERNS: list[tuple[str, _re.Pattern[str]]] = [
+    (name, _re.compile(pat if name != "url" else _CANONICAL_URL))
+    for name, pat in _CANONICAL_IOC_PATTERNS
+    if name != "domain"
 ]
 _DOMAIN_TLD_DENYLIST: frozenset[str] = frozenset(
     {
@@ -1229,6 +1265,9 @@ _IOC_CONFIDENCE: dict[str, float] = {
     "ipv4": 0.85,
     "ipv6": 0.8,
     "domain": 0.7,
+    "mac": 0.85,
+    "btc": 0.9,
+    "eth": 0.9,
 }
 _SPACY_NLP = None
 

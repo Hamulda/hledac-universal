@@ -1,5 +1,5 @@
 """
-ISSUE-010: Subinterpreter Pool — PEP 756 InterpreterPoolExecutor (Python 3.14.6+)
+ISSUE-010: Subinterpreter Pool — PEP 734 InterpreterPoolExecutor (Python 3.14.6+)
 
 Provides true Python-level parallelism with independent GILs via subinterpreters.
 Currently a STUB — activated when HLEDAC_ENABLE_SUBINTERPRETER=1 and CPython 3.14.6+.
@@ -33,7 +33,7 @@ _SUBINTERPRETER_AVAILABLE: bool | None = None
 
 def is_subinterpreter_available() -> bool:
     """
-    Check if subinterpreter mode is available (CPython 3.14.6+ with PEP 756).
+    Check if subinterpreter mode is available (CPython 3.14.6+ with PEP 734).
 
     Returns:
         True if InterpreterPoolExecutor is available and enabled.
@@ -182,7 +182,8 @@ async def run_batch_in_subinterpreter[T](
             except Exception:
                 return None
 
-        return list(await asyncio.gather(*(_run_one(item) for item in items)))
+        results = await asyncio.gather(*(_run_one(item) for item in items), return_exceptions=True)
+        return [None if isinstance(r, BaseException) else r for r in results]
 
     # Subinterpreter path
     loop = asyncio.get_running_loop()

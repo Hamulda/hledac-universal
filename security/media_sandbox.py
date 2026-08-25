@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from hledac.universal.utils.codec import json_loads, json_dump
 import os
 import shutil
 import sys
@@ -34,10 +35,25 @@ from pathlib import Path
 from typing import Any
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal._core.env_config import API_KEY_ALIASES, credential_names
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
+
+# L2: env vars stripped before spawning untrusted media tooling.
+# Derived from the canonical credential registry so a newly registered
+# credential (or alias) is scrubbed automatically instead of being forgotten
+# here — the previous hand-written list contained a name that does not exist
+# anywhere ("CENSYS_API_KEY") while missing CENSYS_API_ID/CENSYS_SECRET.
+_SENSITIVE_ENV_KEYS: frozenset[str] = frozenset(
+    (
+        "HLEDAC_API_KEY",
+        "GITHUB_TOKEN",
+        "NVD_API_KEY",
+        *(name for canonical in API_KEY_ALIASES for name in credential_names(canonical)),
+    )
+)
 
 _wasmtime = None
 _wasmtime_available: bool | None = None
@@ -433,8 +449,8 @@ async def _run_in_subprocess_isolation(
     run_env = {**os.environ}
     if env:
         run_env.update(env)
-    # Strip sensitive vars
-    for key in ["HLEDAC_API_KEY", "SHODAN_API_KEY", "CENSYS_API_KEY", "GREYNOISE_API_KEY"]:
+    # Strip sensitive vars before handing the environment to untrusted media tooling.
+    for key in _SENSITIVE_ENV_KEYS:
         run_env.pop(key, None)
 
     sandbox_profile: str | None = None
@@ -624,7 +640,7 @@ async def main():
         else:
             result['error'] = 'No whisper engine available (tried Rust + Python whispercpp)'
 
-    json.dump(result, sys.stdout)
+    json_dump(result, sys.stdout)
 
 if __name__ == '__main__':
     asyncio.run(main())
@@ -718,7 +734,7 @@ async def run_whisper_in_subprocess(
                 elapsed_ms,
             )
             if proc.returncode == 0 and stdout:
-                return json.loads(stdout.decode("utf-8", errors="replace"))
+                return json_loads(stdout.decode("utf-8", errors="replace"))
             else:
                 return {
                     "text": "",
@@ -1991,7 +2007,7 @@ async def run_pymupdf_sandboxed(
                         )
                         if returncode == 0 and stdout_data:
                             try:
-                                return json.loads(stdout_data.decode("utf-8", errors="replace"))
+                                return json_loads(stdout_data.decode("utf-8", errors="replace"))
                             except json.JSONDecodeError:  # noqa: BLE001
                                 pass
                 except Exception as exc:
@@ -2017,7 +2033,7 @@ async def run_pymupdf_sandboxed(
 
             if proc.returncode == 0 and stdout:
                 try:
-                    return json.loads(stdout.decode("utf-8", errors="replace"))
+                    return json_loads(stdout.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
                     logger.warning("[PYMUPDF-SANDBOX] JSON parse error")
             logger.warning("[PYMUPDF-SANDBOX] Failed: rc=%s", proc.returncode)

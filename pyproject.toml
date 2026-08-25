@@ -555,7 +555,7 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901", "F811", "F821"]  # noqa: E501  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality; F811: redefinition (C-1 double-def guard); F821: undefined names — caught at lint time, not runtime; RUFF022 is enforced via python -m ruff_ext --ci
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901", "F811", "F821", "E402"]  # noqa: E501  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality; F811: redefinition (C-1 double-def guard); F821: undefined names — caught at lint time, not runtime; RUFF022 is enforced via python -m ruff_ext --ci; E402: module-import-not-at-top (surfaced by MODIMP checker)
 ignore = ["E501", "B027"]  # UP006/UP035 enabled for PEP 585 modernization (list[...] not List[...], X | None not Optional[X]); BLE001: P1-01 audit in progress — see Issue #32
 # E911: P1-1 custom — forbid asyncio.run() outside allowed entry points.
 # Allowed: __main__, tools/, tests/. Use: grep -rn 'asyncio\.run(' ... | grep -v __main__ | grep -v 'tools/' | grep -v 'tests/'
@@ -585,6 +585,24 @@ ignore = ["E501", "B027"]  # UP006/UP035 enabled for PEP 585 modernization (list
 #   - _asyncio.gather(...) (internal alias)
 # CI gate: `python tools/audit/ban_raw_gather.py` — expects 0 violations.
 # Tests/ are skipped (raw gather is legitimate for concurrent-test fixtures).
+
+# ── Issue #12: MODIMP ban module-level try/except ImportError ────────────────
+# Scattered try/except ImportError blocks duplicate lazy-import logic across
+# 30+ files and pay a 5-15µs cold-start penalty even on success. The canonical
+# replacement is the transparent lazy-import proxy lazy_import():
+#   from hledac.universal.utils.optional_imports import lazy_import
+#   _i = lazy_import("otel:instrumented",
+#                    default=lazy_import("hledac.universal...:instrumented"))
+# One-shot codemod: `python tools/migrate/migrate_try_import_to_lazy.py`.
+# CI gate: `python tools/audit/ban_mod_level_import_error.py` — expects 0 violations.
+# (Ruff has no built-in "ban module-level ImportError try/except" rule, so we
+#  enforce via the standalone AST checker, mirroring the RUFF022 ruff_ext pattern.)
+
+# ── Issue #13: G4 ban stdlib json outside except-blocks in hot paths ─────────
+# Prefer utils.codec (msgspec → orjson → stdlib fallback) over stdlib json in
+# pipeline hot paths. Typed knowledge schemas (findings/IOC/evidence) live in
+# knowledge/schema.py (msgspec Structs) for 10× faster known-shape payloads.
+# CI gate: `python tools/audit/ban_stdlib_json.py` — expects 0 violations.
 
 [tool.ruff.lint.per-file-ignores]
 # stubs/ – Apple/CoreML framework .pyi binding files; preserve original names
@@ -707,7 +725,6 @@ ignore = ["E501", "B027"]  # UP006/UP035 enabled for PEP 585 modernization (list
 "discovery/**" = ["BLE001"]
 "core/**" = ["BLE001"]
 "security/**" = ["BLE001"]
-"intel/**" = ["BLE001"]
 "runtime/scheduler_v2/**" = ["BLE001"]
 "pipeline/**" = ["BLE001"]
 "core/rust_backend/**" = ["BLE001"]

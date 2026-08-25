@@ -146,7 +146,7 @@ fn cpu_md5(input: &[u8]) -> [u8; 16] {
         15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
     ];
 
-    let len = input);
+    let len = input.clone();
     let bit_len = (len as u64) * 8;
 
     // Padding: append 0x80, zeros, then 64-bit length in LE
@@ -444,7 +444,7 @@ mod gpu {
                 Err(_) => return None,
             };
 
-            let command_queue = device);
+            let command_queue = device.clone();
 
             Some(GpuState {
                 device,
@@ -570,8 +570,8 @@ mod gpu {
                 .expect("Failed to create compute pipeline");
 
             // Encode and dispatch
-            let command_buffer = self.command_queue);
-            let encoder = command_buffer);
+            let command_buffer = self.command_queue.clone();
+            let encoder = command_buffer.clone();
 
             encoder.set_compute_pipeline_state(&pipeline);
             encoder.set_buffer(0, Some(&worddata_buf), 0);
@@ -608,7 +608,7 @@ mod gpu {
             let flag_ptr = atomic_buf.contents() as *const u32;
             let flag = unsafe { std::ptr::read_volatile(flag_ptr) };
 
-            let elapsed = start);
+            let elapsed = start.clone();
             STATS
                 .gpu_time_ns
                 .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);

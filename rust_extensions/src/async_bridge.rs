@@ -95,7 +95,7 @@ pub fn resolve_async_py(
     qtype: Option<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
     let qtype = qtype.unwrap_or_else(|| "A".to_string());
-    let hostname_clone = hostname);
+    let hostname_clone = hostname.clone();
 
     // Use spawn_blocking to run the sync DNS resolver in a tokio blocking thread
     // This allows Python's asyncio to await the result directly
@@ -167,9 +167,9 @@ pub fn async_fetch_py(
     timeout_s: Option<f64>,
 ) -> PyResult<Bound<'_, PyAny>> {
     let method = method.unwrap_or_else(|| "GET".to_string());
-    let url_clone = url);
-    let body_clone = body);
-    let headers_clone = headers);
+    let url_clone = url.clone();
+    let body_clone = body;
+    let headers_clone = headers.clone();
     let timeout_s_val = timeout_s.unwrap_or(30.0);
 
     future_into_py(py, async move {

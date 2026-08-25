@@ -21,13 +21,14 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
+from hledac.universal.utils.asyncx import _check_gathered
 from hledac.universal.utils.msgspec_json import decode, encode
 
 if TYPE_CHECKING:
     import httpx
+    from hledac.universal.knowledge.ioc_graph import IOCGraph
 
-    from hledac.universal._core.ioc_patterns import DOMAIN_RE
-from hledac.universal.knowledge.ioc_graph import IOCGraph
+from hledac.universal._core.ioc_patterns import DOMAIN_RE
 
 logger = logging.getLogger(__name__)
 _INVALID_DOMAINS = frozenset({"localhost", ".local", ".test", ".invalid", "localhost.localdomain"})
@@ -104,7 +105,7 @@ class CTLogClient:
         """
         if not query:
             return []
-        from hledac.universal.intel.intel_seed import AptOnionSeeder
+        from hledac.universal.recon.intel_seed import AptOnionSeeder
 
         seeder = AptOnionSeeder()
         candidates = seeder.get_candidates_for_query(query, min_confidence=0.7)
@@ -136,14 +137,17 @@ class CTLogClient:
             else:
                 logger.debug("CT search: no domains in query, skipping CT pivot")
             return []
-        results: list[dict] = []
-        for domain in domains:
+        # M-2026-FIX: parallel pivot_domain via asyncio.gather — all domains queried concurrently.
+        async def _pivot_one(domain: str) -> dict | None:
             try:
-                result = await self.pivot_domain(domain, session)
-                results.append(result)
+                return await self.pivot_domain(domain, session)
             except Exception as e:
                 logger.warning(f"CT search domain {domain}: {e}")
-        return results
+                return None
+
+        gathered = await asyncio.gather(*[_pivot_one(d) for d in domains], return_exceptions=True)
+        ok_results, _errors = _check_gathered(list(gathered))
+        return [r for r in ok_results if r is not None]
 
     async def pivot_domain(self, domain: str, session: httpx.AsyncClient) -> dict:
         """Hlavní entry point — vrátí CT log findings pro doménu.

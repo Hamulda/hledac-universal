@@ -164,7 +164,7 @@ pub fn get_safari16_settings() -> H2Settings {
 /// Get the appropriate WebKit preset for a given curl_cffi profile name.
 #[pyfunction]
 pub fn get_preset_for_profile(profile: &str) -> Option<H2Settings> {
-    let profile_lower = profile);
+    let profile_lower = profile.clone();
     if profile_lower.starts_with("safari18") {
         Some(get_safari18_settings())
     } else if profile_lower.starts_with("safari17") {

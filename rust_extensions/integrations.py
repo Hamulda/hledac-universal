@@ -72,8 +72,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -442,7 +440,7 @@ class LSHIndexIntegration:
 
     def create_index(
         self, num_tables: int = 16, num_rows: int = 4
-    ) -> "LSHIndexIntegration":
+    ) -> LSHIndexIntegration:
         """
         Create a new LSH index.
 
@@ -1269,7 +1267,7 @@ class TelemetryIntegration:
         """Check if Rust telemetry_agg is available."""
         return self._available
 
-    def create_counter(self, name: str) -> "TelemetryCounter":
+    def create_counter(self, name: str) -> TelemetryCounter:
         """Create a new atomic counter."""
         if self._available:
             try:
@@ -1280,7 +1278,7 @@ class TelemetryIntegration:
 
     def create_histogram(
         self, name: str, min_value: int = 1, max_value: int = 3_600_000_000
-    ) -> "TelemetryHistogram":
+    ) -> TelemetryHistogram:
         """Create a new HDR histogram."""
         if self._available:
             try:
@@ -1291,7 +1289,7 @@ class TelemetryIntegration:
                 pass
         return TelemetryHistogram(name, None, min_value, max_value)
 
-    def create_gauge(self, name: str, initial_value: float = 0.0) -> "TelemetryGauge":
+    def create_gauge(self, name: str, initial_value: float = 0.0) -> TelemetryGauge:
         """Create a new volatile gauge for current-value tracking.
         
         Gauges are ideal for:
@@ -1712,7 +1710,7 @@ class IOCDedupIntegration:
 
     def create_store(
         self, mmap_path: str | None = None, max_entries: int = 1_000_000
-    ) -> "IOCDedupStore":
+    ) -> IOCDedupStore:
         """Create IOC dedup store."""
         if self._module is not None:
             try:
@@ -2652,7 +2650,7 @@ __all__ = [
     "get_mpsc",  # G5.MPSC_POOL: Factory function
 ]
 
-_mpsc_instance: "MPSCIntegration | None" = None
+_mpsc_instance: MPSCIntegration | None = None
 
 class MPSCIntegration:
     """

@@ -36,8 +36,6 @@ import random as _random
 from typing import TYPE_CHECKING, TypeVar
 from collections.abc import Awaitable, Callable
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -198,7 +196,7 @@ class RetryLoop:
         self._backoff_factor = backoff_factor
         self._exhausted = False
 
-    def __iter__(self) -> "RetryLoop":
+    def __iter__(self) -> RetryLoop:
         return self
 
     def __next__(self) -> tuple[int, float]:

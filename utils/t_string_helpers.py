@@ -4,26 +4,34 @@ PEP 750 t-string utilities for Hledac Universal.
 Provides helpers for working with Python 3.14+ t-strings (Template strings).
 These are type-safe, analyzable string templates parsed at compile-time.
 
-IMPORTANT: t-strings evaluate interpolation VALUES at COMPILE TIME, not runtime.
-This means t"Hello {name}" where name="world" at compile time stores "world"
-as the value — changing name later has no effect on the already-compiled Template.
+IMPORTANT — CORRECT SEMANTICS: t-strings evaluate interpolation VALUES at
+RUNTIME (exactly like f-strings), NOT at compile/import time. When the
+``t"..."`` expression executes, each ``{expr}`` is evaluated and its value is
+captured inside the resulting ``Template`` object (with the source expression,
+conversion flag, and format spec). Re-running the same t-string with a
+different variable value produces a new Template with the new value — nothing
+is "baked in" at compile time. This is what makes t-strings safe for dynamic,
+untrusted input: the value is available for sanitization at assembly time
+(see ``build_sanitized_prompt``).
 
 USE CASES for t-strings in Hledac:
 1. Static prompt analysis (what variables does this prompt use?)
 2. Security auditing (can inspect interpolations without running code)
 3. Prompt registry/catalog metadata
-4. Logging what variables were captured at compile time
+4. Runtime sanitization hook for LLM-01 prompt-injection defense
+   (``build_sanitized_prompt`` neutralizes control chars / chat-template
+   delimiters smuggled inside interpolated OSINT text)
 
 USE CASES where t-strings DO NOT help:
-- Dynamic MLX prompt construction (f-strings remain correct)
-- Runtime parameterization (values baked in at compile time)
+- None — unlike f-strings, t-strings expose the template structure, enabling
+  prompt-injection defense and static analysis of interpolated content.
 
 Example:
     from hledac.universal.utils.t_string_helpers import t_analyze, t_inspect
 
-    # At compile time, when query="ransomware" and limit=5:
+    # At runtime (when this statement executes), with query="ransomware", limit=5:
     prompt_tpl = t"Query: {query} limit {limit:05d}"
-    # .values stores ('ransomware', 5) — baked in at compile time!
+    # the Template captures ('ransomware', 5) as runtime values (NOT baked in).
 
     # Analysis (useful for logging/audit):
     analysis = t_analyze(prompt_tpl)
@@ -41,6 +49,11 @@ Example:
 Requires: Python 3.14+ with t-string support (string.templatelib)
 """
 
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+
 from string.templatelib import Template
 
 __all__ = [
@@ -51,6 +64,8 @@ __all__ = [
     "t_variables",
     "t_has_variable",
     "t_find_suspicious",
+    "build_sanitized_prompt",
+    "t_render",
 ]
 
 
@@ -194,3 +209,84 @@ def t_find_suspicious(tpl: Template) -> list[str]:
         if interp.format_spec:
             warnings.append(f'Variable "{expr}" has format_spec (may contain expressions)')
     return warnings
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PEP 750 prompt-injection defense (LLM-01)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Control characters an adversary could smuggle into OSINT text to break out of
+# the intended prompt structure (null/backspace tricks, ANSI, DEL, etc.).
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _default_sanitizer(value: str) -> str:
+    """Neutralize prompt-injection vectors in untrusted interpolated text.
+
+    - Strips C0/C1 control characters.
+    - Escapes chat-template delimiters (``<|...|>``) so external findings
+      cannot spoof role boundaries.
+    """
+    cleaned = _CONTROL_CHARS_RE.sub("", str(value))
+    cleaned = cleaned.replace("<|", "<｜").replace("|>", "｜>")
+    return cleaned
+
+
+def build_sanitized_prompt(
+    tpl: Template,
+    *,
+    sanitize: Callable[[str], str] = _default_sanitizer,
+    only: set[str] | None = None,
+) -> str:
+    """Render a t-string Template into a prompt, sanitizing interpolations.
+
+    Unlike f-strings, the Template exposes its static parts and interpolations
+    explicitly. This renderer applies ``sanitize`` to each interpolated *value*
+    at assembly time, so untrusted OSINT text (e.g. ``findings_text``) cannot
+    smuggle control characters or chat-template delimiters into the LLM prompt
+    (LLM-01 defense at the template level).
+
+    Args:
+        tpl: A ``t"..."`` Template.
+        sanitize: Callable applied to each str interpolation value.
+        only: If set, sanitize ONLY interpolations whose source expression
+            matches one of these names (e.g. ``{"findings_text"}``). When
+            ``None``, every str interpolation is sanitized.
+
+    Returns:
+        The assembled, sanitized prompt string.
+    """
+    _require_template(tpl, "build_sanitized_prompt")
+    parts: list[str] = []
+    strings = tpl.strings
+    interps = tpl.interpolations
+    for i, static in enumerate(strings):
+        parts.append(static)
+        if i < len(interps):
+            val = interps[i].value
+            if isinstance(val, str):
+                if only is None or interps[i].expression in only:
+                    parts.append(sanitize(val))
+                else:
+                    parts.append(val)
+            else:
+                parts.append(str(val))
+    return "".join(parts)
+
+
+def t_render(tpl: Template) -> str:
+    """Render a t-string Template to a plain string WITHOUT sanitization.
+
+    Use only when all interpolations are already trusted (e.g. internal
+    metadata). For untrusted input prefer :func:`build_sanitized_prompt`.
+    """
+    _require_template(tpl, "t_render")
+    parts: list[str] = []
+    strings = tpl.strings
+    interps = tpl.interpolations
+    for i, static in enumerate(strings):
+        parts.append(static)
+        if i < len(interps):
+            val = interps[i].value
+            parts.append(str(val))
+    return "".join(parts)

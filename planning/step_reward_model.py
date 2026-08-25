@@ -83,11 +83,13 @@ def _check_coreml_available() -> bool:
         return False
     if sys.version_info >= (3, 14):
         try:
+            import coremltools
         except ImportError:
             logger.warning('[PRM] Python 3.14 — coremltools not installed.\n  Install from Apple channel:\n    pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools\n  Or run once: python -m planning.prm_model_export')
             return False
     else:
         try:
+            import coremltools
         except ImportError:
             logger.warning('[PRM] coremltools not installed')
             return False
@@ -131,7 +133,7 @@ class PRMFeatureVector:
         return self.features.tolist()
 
     @classmethod
-    def zeros(cls) -> 'PRMFeatureVector':
+    def zeros(cls) -> PRMFeatureVector:
         """Create zero-filled feature vector."""
         return cls(np.zeros(_PRM_FEATURE_DIM, dtype=np.float32))
 
@@ -172,7 +174,7 @@ class PRMFeatureExtractor:
             self._branching_history = self._branching_history[-20:]
         self._avg_branching = sum(self._branching_history) / len(self._branching_history)
 
-    def extract(self, node: 'ThoughtNode', context: PRMInferenceContext) -> PRMFeatureVector:
+    def extract(self, node: ThoughtNode, context: PRMInferenceContext) -> PRMFeatureVector:
         """
         Extract 16-dim feature vector from node and context.
 
@@ -220,7 +222,7 @@ class PRMFeatureExtractor:
 @dataclass(slots=True)
 class PRMInferenceContext:
     """Context for PRM feature extraction."""
-    parent: 'ThoughtNode | None' = None
+    parent: ThoughtNode | None = None
     sibling_values: list[float] = field(default_factory=list)
     query_complexity: float = 0.5
     dead_end_prob: float = 0.0
@@ -586,7 +588,7 @@ class CumulativePRMScorer:
         """Access feature extractor."""
         return self._feature_extractor
 
-    def score_node(self, node: 'ThoughtNode', context: PRMInferenceContext) -> tuple[float, float]:
+    def score_node(self, node: ThoughtNode, context: PRMInferenceContext) -> tuple[float, float]:
         """
         Score a thought node with cumulative PRM rewards.
 
@@ -870,7 +872,7 @@ class RustPRMScorer:
         if hasattr(self, '_finalizer') and self._finalizer.detach():
             self.unload()
 
-    def __enter__(self) -> 'RustPRMScorer':
+    def __enter__(self) -> RustPRMScorer:
         """Context manager entry."""
         self.load()
         return self

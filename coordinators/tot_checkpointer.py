@@ -298,7 +298,7 @@ class TransactionalToTCheckpointer:
         """
         if self._task is not None and not self._task.done():
             return
-        self._task = asyncio.create_task(self._periodic_loop(), name=f"tot_ckpt_{self._sprint_id[:12]}")
+        self._task = safe_create_task(self._periodic_loop(), name=f"tot_ckpt_{self._sprint_id[:12]}")
         logger.debug(
             "[UNIFIED-005] ToT checkpointing started: sprint=%s interval=%.0fs fs_fallback=%s",
             self._sprint_id[:12],

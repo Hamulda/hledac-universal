@@ -35,6 +35,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from knowledge.dedup import DedupManager
 
+from hledac.universal.utils.sync_bridge import run_sync_async
+
+logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 # [C12] M1 8GB bounds for link prediction
@@ -535,18 +538,16 @@ class DedupCoordinator:
 
         Note: This is primarily for testing/CLI use. In async contexts,
         prefer calling adedup_check() directly.
+
+        ISSUE-2 FIX: Replaced broken try/except asyncio.get_running_loop() logic
+        (which crashed in async context) with run_sync_async() from sync_bridge.
+        run_sync_async() handles both cases:
+        - No running loop: asyncio.Runner().run() [PEP 654]
+        - Running loop: asyncio.run_coroutine_threadsafe(...).result()
         """
-        import asyncio
-
-        # [FIX] Don't create nested event loops - just run coroutine directly
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop - create new one
-            with asyncio.Runner() as runner:
-                return runner.run(self.adedup_check(fingerprint, ioc_value, ioc_type, node_id))
-
-        return asyncio.run(self.adedup_check(fingerprint, ioc_value, ioc_type, node_id))
+        return run_sync_async(
+            self.adedup_check(fingerprint, ioc_value, ioc_type, node_id)
+        )
 
     async def arun_link_prediction_batch(
         self,

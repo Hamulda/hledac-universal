@@ -262,7 +262,7 @@ async def run_enabled_acquisition_lanes(
         sample_rejections: tuple = ()
         shaped_query_str = query
         try:
-            from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner as _WDM
+            from hledac.universal.recon.wayback_diff_miner import WaybackDiffMiner as _WDM
 
             if not callable(_WDM):
                 raise ImportError("WaybackDiffMiner not callable")
@@ -421,7 +421,7 @@ async def run_enabled_acquisition_lanes(
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.academic_search import AcademicSearchEngine, SearchResult
+                from hledac.universal.recon.academic_search import AcademicSearchEngine, SearchResult
                 from hledac.universal.runtime.source_finding_bridge import academic_results_to_findings
 
                 engine = AcademicSearchEngine(enable_expansion=False)
@@ -672,7 +672,7 @@ async def run_enabled_acquisition_lanes(
             )
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.doh_lane import DOHAdapter
+                from hledac.universal.recon.doh_lane import DOHAdapter
                 from hledac.universal.network.session_runtime import async_get_httpx_session
                 from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
 

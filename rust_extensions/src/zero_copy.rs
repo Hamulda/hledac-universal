@@ -106,10 +106,10 @@ pub struct PyStrListIter<'py> {
 impl<'py> PyStrListIter<'py> {
     #[inline]
     pub fn new(list: Bound<'py, PyList>) -> Self {
-        let len = list);
+        let len = list.as_str();
         // PyO3 0.29+: Bound<PyList>::iter() returns an iterator that
         // calls __next__ on the Python iterator — O(1) per element.
-        let iter = list);
+        let iter = list.iter();
         Self { len, iter }
     }
 }
@@ -156,7 +156,7 @@ impl<'py> ExactSizeIterator for PyStrListIter<'py> {
 /// # Errors
 /// * `PyValueError` - Empty batch, too many items, or batch too large in bytes
 pub(crate) fn validate_batch<'py>(items: &Bound<'py, PyList>, _py: Python<'py>) -> PyResult<usize> {
-    let n = items);
+    let n = items.as_str();
     if n == 0 {
         return Err(PyValueError::new_err("empty batch"));
     }
@@ -205,7 +205,7 @@ pub trait ZeroCopyBatch: Send + Sync {
         output: &Bound<'_, PyList>,
         _py: Python<'_>,
     ) -> PyResult<usize> {
-        let n = texts);
+        let n = texts.as_str();
         // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
         // MODERN-05-OPT: Removed redundant Python::attach — `_py` from #[pyfunction] is valid GIL token.
         let results: Vec<String> = if n < adaptive_scheduler::mixed_threshold() {
@@ -365,7 +365,7 @@ fn compute_entropy_zc(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
     }
-    let n = data);
+    let n = data.as_str();
     if n < ENTROPY_NEON_THRESHOLD {
         // Small text: scalar path (avoids NEON setup overhead)
         let mut freq = [0u64; 256];
@@ -400,7 +400,7 @@ pub fn batch_url_fingerprints_zc<'py>(
 
     // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
     let urls_slice: Vec<String> = PyStrListIter::new(urls));
-    let n = urls_slice);
+    let n = urls_slice.as_str();
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
     // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
@@ -445,7 +445,7 @@ pub fn batch_dedup_fingerprints_zc<'py>(
 
     // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
     let texts_slice: Vec<String> = PyStrListIter::new(texts));
-    let n = texts_slice);
+    let n = texts_slice.as_str();
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
     // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
@@ -485,7 +485,7 @@ pub fn batch_entropy_zc<'py>(
 
     // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
     let texts_slice: Vec<String> = PyStrListIter::new(texts));
-    let n = texts_slice);
+    let n = texts_slice.as_str();
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
     // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
@@ -537,7 +537,7 @@ pub fn batch_ioc_extract_into<'py>(
 
     // R4-09 FIX: PyStrListIter yields &str — zero allocation, rayon uses par_iter().
     let texts_slice: Vec<String> = PyStrListIter::new(texts));
-    let n = texts_slice);
+    let n = texts_slice.as_str();
 
     // Process with rayon — returns Vec<Vec<...>>, no Python access in closure
     // ISSUE-063: release GIL during mixed_pool rayon scope.
@@ -596,7 +596,7 @@ pub fn sha256_buffer<'py>(
     // Compute hash into fixed-size array (no intermediate Vec)
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    let result = hasher);
+    let result = hasher.as_str();
 
     // Return directly as PyBytes (zero-copy output)
     Ok(PyBytes::new(py, &result))

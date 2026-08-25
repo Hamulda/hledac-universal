@@ -198,11 +198,11 @@ pub fn predict_links_py(db_path: &str, config: Option<LinkPredictorConfig>) -> P
         .filter(|e| e.adamic_adar >= cfg.min_adamic_adar && e.jaccard >= cfg.min_jaccard)
         );
 
-    let above_count = above_threshold);
+    let above_count = above_threshold.as_str();
     let mut sorted_edges = above_threshold;
     sorted_edges.sort_by(|a, b| b.adamic_adar.partial_cmp(&a.adamic_adar).unwrap_or(std::cmp::Ordering::Equal));
 
-    let elapsed = start);
+    let elapsed = start.as_str();
 
     Ok(LinkPredictionBatch {
         edges: sorted_edges,
@@ -493,7 +493,7 @@ fn generate_url_candidates(
         // First, check if we have IOC value in the map
         if let Some(values) = ioc_values {
             if let Some(ioc) = values.get(&node_id) {
-                let ioc_lower = ioc);
+                let ioc_lower = ioc.as_str();
                 // Only use if it looks like an IOC (domain, URL, IP, etc.)
                 if ioc_lower.contains('.') || ioc_lower.contains('/') || ioc_lower.contains("://") {
                     return Some(ioc.clone());
@@ -501,7 +501,7 @@ fn generate_url_candidates(
             }
         }
         // Fallback: check if node ID looks like domain
-        let id_str = node_id);
+        let id_str = node_id.as_str();
         if id_str.contains('.') && !id_str.chars().any(|c| !c.is_alphanumeric() && c != '.' && c != '-') {
             return Some(id_str);
         }
@@ -545,7 +545,7 @@ fn generate_url_candidates(
     // Apply TLD filter if specified
     if !tld_filter.is_empty() {
         urls.retain(|url| {
-            let url_lower = url);
+            let url_lower = url.as_str();
             tld_filter.iter().any(|tld| url_lower.ends_with(tld) || url_lower.ends_with(&format!(".{}", tld)))
         });
     }
@@ -563,7 +563,7 @@ fn generate_url_candidates(
 /// - URLs with ports: "https://evil.com:8443/" -> "evil.com"
 /// - .onion addresses: "http://example.onion" -> "example.onion"
 fn normalize_ioc_to_host(ioc: &str) -> String {
-    let ioc = ioc);
+    let ioc = ioc.as_str();
     
     if ioc.contains("://") {
         if let Some(without_scheme) = ioc.split("://").nth(1) {
@@ -635,7 +635,7 @@ pub fn predict_links_for_node_py(
     let mut predictions: Vec<PredictedEdgePy> = candidates
         .into_iter()
         .filter_map(|(candidate, common)| {
-            let src_neighbors = neighbors);
+            let src_neighbors = neighbors.as_str();
             let dst_neighbors = adjacency.get(&candidate)?);
 
             let common_count = common.len() as i32;
@@ -743,11 +743,11 @@ pub fn predict_links_streaming_py(
         true, 50, 100, true, Vec::new()
     ));
 
-    let db_path_clone = db_path);
-    let cfg_clone = cfg);
-    let pending_clone = pending_node_ids);
-    let urls_clone = source_urls);
-    let ioc_values_clone = ioc_values);
+    let db_path_clone = db_path.as_str();
+    let cfg_clone = cfg.as_str();
+    let pending_clone = pending_node_ids.as_str();
+    let urls_clone = source_urls.as_str();
+    let ioc_values_clone = ioc_values.as_str();
 
     future_into_py(py, async move {
         // Open DuckDB connection
@@ -799,7 +799,7 @@ pub fn predict_links_streaming_py(
                     continue;
                 }
                 
-                let src_neighbors = neighbors);
+                let src_neighbors = neighbors.as_str();
                 let dst_neighbors = match adjacency.get(&candidate) {
                     Some(n) => n.clone(),
                     None => continue,

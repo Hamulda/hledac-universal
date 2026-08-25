@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Any, Final
 from hledac.universal.transport.circuit_breaker import (
     TransportCircuitBreaker,
 )
-from hledac.universal.transport.utils import (
+from hledac.universal.utils.asyncx import (
     safe_create_task,
 )
 from hledac.universal.utils.asyncx import safe_wait_for
@@ -956,7 +956,7 @@ class TransportRaceManager:
         )
         # Cache winning transport
         if winner.transport in _WINNER_CANONICAL_TRANSPORTS:
-            asyncio.create_task(_winner_cache_set(host, winner.transport))
+            safe_create_task(_winner_cache_set(host, winner.transport))
             logger.debug(
                 "transport_race: winner cache set %s → %s",
                 host,
@@ -1067,7 +1067,7 @@ class TransportRaceManager:
     ) -> None:
         """Sync wrapper for _record_to_route_graph (for use in non-async context)."""
         # Create a fire-and-forget task since we don't need to await
-        asyncio.create_task(self._record_to_route_graph(transport, domain, success, latency_ms))
+        safe_create_task(self._record_to_route_graph(transport, domain, success, latency_ms))
 
     async def _fetch_one(
         self,

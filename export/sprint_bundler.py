@@ -36,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
-import json as _stdlib_json
+from hledac.universal.utils.codec import json_dumps, json_loads
 import logging
 import os
 import shutil
@@ -383,7 +383,7 @@ def _collect_artifacts_for_bundle(
     if metadata:
         bundle_metadata.update(metadata)
 
-    metadata_bytes = _stdlib_json.dumps(bundle_metadata, indent=2).encode("utf-8")
+    metadata_bytes = json_dumps(bundle_metadata, indent=2).encode("utf-8")
     artifacts["metadata.json"] = metadata_bytes
     manifest_entries.append(
         {
@@ -738,7 +738,7 @@ def extract_bundle_streaming(
                             else:
                                 entity_text = entity_bytes.decode("utf-8")
                             # Merge with any newly indexed entities
-                            existing_index = _stdlib_json.loads(entity_text)
+                            existing_index = json_loads(entity_text)
                             entity_index.update(existing_index)
                             logger.debug(
                                 "[BUNDLER] Loaded %d entries from existing %s",
@@ -847,7 +847,7 @@ def _build_entity_index_for_bundle(
     [NEXTGEN-04] [FIX #5]: Uses ENTITY_INDEX_FILENAME constant to ensure
     consistency with MmapDeltaIndex._extract_entity_index_from_bundle().
     """
-    index_bytes = _stdlib_json.dumps(entity_index).encode("utf-8")
+    index_bytes = json_dumps(entity_index).encode("utf-8")
     zstd = _get_zstd()
     if zstd is not None:
         return zstd.compress(index_bytes, level=3)

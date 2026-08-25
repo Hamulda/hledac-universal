@@ -54,6 +54,7 @@ from typing import Any
 
 __all__ = [
     "optional",
+    "lazy_import",
     "lazy_decorator",
     # MLX lazy imports (ISSUE #14)
     "MLX_AVAILABLE",
@@ -111,15 +112,15 @@ def get_mlx_core() -> Any:
 
     Thread-safe: uses double-checked locking pattern.
     """
-    global _mx_core_module
-    if _mx_core_module is None and MLX_AVAILABLE:
-        with _mx_import_lock:
-            if _mx_core_module is None:  # Double-check
+    global _mlx_core_module
+    if _mlx_core_module is None and MLX_AVAILABLE:
+        with _mlx_import_lock:
+            if _mlx_core_module is None:  # Double-check
                 try:
-                    import mlx.core as _mx_core_module
+                    import mlx.core as _mlx_core_module
                 except ImportError:
-                    _mx_core_module = None
-    return _mx_core_module
+                    _mlx_core_module = None
+    return _mlx_core_module
 
 
 def get_mlx_lm() -> Any:
@@ -130,15 +131,15 @@ def get_mlx_lm() -> Any:
 
     ISSUE #14 FIX: Use this instead of top-level `import mlx_lm`.
     """
-    global _mx_lm_module
-    if _mx_lm_module is None:
-        with _mx_import_lock:
-            if _mx_lm_module is None:
+    global _mlx_lm_module
+    if _mlx_lm_module is None:
+        with _mlx_import_lock:
+            if _mlx_lm_module is None:
                 try:
-                    import mlx_lm as _mx_lm_module
+                    import mlx_lm as _mlx_lm_module
                 except ImportError:
-                    _mx_lm_module = None
-    return _mx_lm_module
+                    _mlx_lm_module = None
+    return _mlx_lm_module
 
 
 def get_mlx_nn() -> Any:
@@ -149,15 +150,15 @@ def get_mlx_nn() -> Any:
 
     ISSUE #14 FIX: Use this instead of top-level `import mlx.nn as nn`.
     """
-    global _mx_nn_module
-    if _mx_nn_module is None and MLX_AVAILABLE:
+    global _mlx_nn_module
+    if _mlx_nn_module is None and MLX_AVAILABLE:
         with _mx_import_lock:
-            if _mx_nn_module is None:
+            if _mlx_nn_module is None:
                 try:
-                    import mlx.nn as _mx_nn_module
+                    import mlx.nn as _mlx_nn_module
                 except ImportError:
-                    _mx_nn_module = None
-    return _mx_nn_module
+                    _mlx_nn_module = None
+    return _mlx_nn_module
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -377,6 +378,172 @@ def optional(dotted: str, *, default: _OptionalImport | Any | None = None) -> _O
         The returned _OptionalImport is reusable — resolution is cached.
     """
     return _OptionalImport(dotted, default=default)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Transparent lazy-import proxy (ISSUE #12 FIX — drop-in for try/except ImportError)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _try_resolve_dotted(dotted: str) -> Any:
+    """Resolve ``"module"`` or ``"module:attr"`` to the object, or ``None`` on failure."""
+    try:
+        if ":" in dotted:
+            mod_name, attr_name = dotted.split(":", 1)
+            mod = importlib.import_module(mod_name)
+            return getattr(mod, attr_name)
+        return importlib.import_module(dotted)
+    except (ImportError, AttributeError):
+        return None
+
+
+class _LazyProxy:
+    """
+    Transparent lazy-import proxy — drop-in replacement for module-level
+    ``try: import X except ImportError: ...`` blocks.
+
+    Unlike :class:`_OptionalImport` (a *resolver* — call it to obtain the value),
+    ``_LazyProxy`` is a *transparent proxy* that forwards attribute access, calls,
+    and common dunder operations to the resolved object. This makes it a true
+    1:1 replacement for the bound symbol at every call site:
+
+        # Before (antipattern — ~5-15µs cold-start + scattered logic across files):
+        try:
+            from otel import instrumented as _instr
+        except ImportError:
+            from hledac.universal.otel._instrumentation import instrumented as _instr
+
+        # After (zero-cost at import; call sites unchanged):
+        from hledac.universal.utils.optional_imports import lazy_import
+        _instr = lazy_import("otel:instrumented",
+                             default=lazy_import("hledac.universal.otel._instrumentation:instrumented"))
+
+        _instr(...)        # forwards to the resolved function
+        if _instr: ...     # True iff resolved and not None
+        _instr.some_attr   # forwards attribute access
+
+    M1 8GB: no eager import; resolution happens on first attribute/call access.
+    Python 3.14+: GIL-atomic resolution flag via double-checked locking.
+    """
+
+    __slots__ = ("_dotted", "_default", "_resolved", "_value", "_lock")
+
+    def __init__(self, dotted: str, *, default: _LazyProxy | Any | None = None) -> None:
+        self._dotted = dotted
+        self._default = default
+        self._resolved = False
+        self._value: Any = None
+        self._lock = threading.Lock()
+
+    def _resolve(self) -> Any:
+        if self._resolved:
+            return self._value
+        with self._lock:
+            if self._resolved:  # double-check
+                return self._value
+            value = _try_resolve_dotted(self._dotted)
+            if value is None and self._default is not None:
+                if isinstance(self._default, _LazyProxy):
+                    value = self._default._resolve()
+                else:
+                    value = self._default
+            self._value = value
+            self._resolved = True  # GIL-atomic on 3.14+
+            return value
+
+    # ── Transparent forwarding ──────────────────────────────────────────────
+    def __getattr__(self, name: str) -> Any:
+        # Only invoked when normal lookup on the instance fails.
+        return getattr(self._resolve(), name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._resolve()(*args, **kwargs)
+
+    def __bool__(self) -> bool:
+        return self._resolve() is not None
+
+    def __repr__(self) -> str:
+        return f"<lazy_import {self._dotted!r} resolved={self._resolved}>"
+
+    # Forwarded dunders (special-method lookup uses the type, so the common
+    # ones are defined explicitly for drop-in compatibility).
+    def __getitem__(self, key: Any) -> Any:
+        return self._resolve()[key]
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self._resolve()[key] = value
+
+    def __delitem__(self, key: Any) -> None:
+        del self._resolve()[key]
+
+    def __contains__(self, key: Any) -> bool:
+        return key in self._resolve()
+
+    def __iter__(self) -> Any:
+        return iter(self._resolve())
+
+    def __len__(self) -> int:
+        return len(self._resolve())
+
+    def __eq__(self, other: Any) -> bool:
+        return self._resolve() == other
+
+    def __ne__(self, other: Any) -> bool:
+        return self._resolve() != other
+
+    def __hash__(self) -> int:
+        return hash(self._resolve())
+
+    def __enter__(self) -> Any:
+        return self._resolve().__enter__()
+
+    def __exit__(self, *exc: Any) -> Any:
+        return self._resolve().__exit__(*exc)
+
+    def __aenter__(self) -> Any:
+        return self._resolve().__aenter__()
+
+    def __aexit__(self, *exc: Any) -> Any:
+        return self._resolve().__aexit__(*exc)
+
+    @property
+    def available(self) -> bool:
+        """True if resolution succeeded (symbol exists and is not None)."""
+        return self._resolve() is not None
+
+    def resolve(self) -> Any:
+        """Explicitly resolve and return the underlying object."""
+        return self._resolve()
+
+
+def lazy_import(dotted: str, *, default: _LazyProxy | Any | None = None) -> _LazyProxy:
+    """
+    Create a transparent lazy-import proxy (ISSUE #12 canonical replacement).
+
+    Replaces module-level ``try: import X except ImportError: ...`` blocks with a
+    single, zero-cost-at-import assignment that is behaviorally identical at every
+    call site.
+
+    Args:
+        dotted: Dotted path ``"module"`` or ``"module:attr"``.
+        default: Fallback proxy or value if resolution fails.
+
+    Returns:
+        ``_LazyProxy`` — use it exactly as you would the imported symbol.
+
+    Example:
+        from hledac.universal.utils.optional_imports import lazy_import
+
+        # module import with attribute fallback
+        instrumented = lazy_import("otel:instrumented",
+            default=lazy_import("hledac.universal.otel._instrumentation:instrumented"))
+
+        # optional module (unavailable → resolves to None; test via truthiness)
+        duckdb = lazy_import("duckdb", default=None)
+        if duckdb:
+            duckdb.connect(...)
+    """
+    return _LazyProxy(dotted, default=default)
 
 
 class _LazyDecorator:

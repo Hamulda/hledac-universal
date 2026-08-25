@@ -45,11 +45,9 @@ from typing import Literal
 
 from compat.msgspec_gc_compat import Struct
 
-try:
-    from typing import Literal
-except ImportError:
-    from typing import Literal
+Literal = lazy_import("typing:Literal", default=lazy_import("typing:Literal"))
 from hledac.universal._core.psutil_shim import psutil_module as _psutil_mod
+from hledac.universal.utils.optional_imports import lazy_import
 
 
 class HardwareCapabilities(Struct, frozen=True):
@@ -69,7 +67,7 @@ class HardwareCapabilities(Struct, frozen=True):
     memory_available_bytes: int = 0
     memory_total_gb: float = 0.0
     memory_available_gb: float = 0.0
-    ram_tier: Literal["8gb", "16gb", "32gb", "64gb", "other"] = "other"
+    ram_tier: Literal["8gb", "16gb", "32gb", "64gb", other] = "other"
     python_build_flags: tuple[str, ...] = field(default_factory=tuple)
     has_metal: bool = False
     has_ane: bool = False
@@ -192,13 +190,13 @@ class SystemDetector:
         except Exception:
             return 0, 0
 
-    def _detect_memory(self) -> tuple[int, int, float, float, Literal["8gb", "16gb", "32gb", "64gb", "other"]]:
+    def _detect_memory(self) -> tuple[int, int, float, float, Literal["8gb", "16gb", "32gb", "64gb", other]]:
         """Detect total and available memory, compute RAM tier."""
         memory_total_bytes = 0
         memory_available_bytes = 0
         memory_total_gb = 0.0
         memory_available_gb = 0.0
-        ram_tier: Literal["8gb", "16gb", "32gb", "64gb", "other"] = "other"
+        ram_tier: Literal["8gb", "16gb", "32gb", "64gb", other] = "other"
         try:
             psutil = _psutil_mod()
             vm = psutil.virtual_memory()

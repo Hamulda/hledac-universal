@@ -28,8 +28,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 from rust_extensions.integrations import get_text_similarity

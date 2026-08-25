@@ -575,7 +575,7 @@ class GhostExecutor:
         query = params.get("query", "")
         logger.info(f"Research paper search: {query}")
         try:
-            from hledac.universal.intel.academic_search import search_academic
+            from hledac.universal.recon.academic_search import search_academic
 
             result = await search_academic(query, max_results=20, enable_expansion=True)
             papers = []
@@ -603,7 +603,7 @@ class GhostExecutor:
         url = params.get("url", "")
         logger.info(f"Archive fallback: {url}")
         try:
-            from hledac.universal.intel.archive_discovery import search_archives
+            from hledac.universal.recon.archive_discovery import search_archives
 
             archive_result = await search_archives(url)
             if archive_result and archive_result.snapshots:

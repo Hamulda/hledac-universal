@@ -234,7 +234,7 @@ class DeepHermes3Engine:
 
         # Configuration
         self._max_kv_size = 8192
-        self._kv_bits = int(os.getenv("GHOST_KV_BITS", "4"))
+        self._kv_bits = int(os.getenv("HLEDAC_KV_BITS", os.getenv("GHOST_KV_BITS", "4")))
 
         # State observer (lazy import to avoid circular deps)
         from brain.model_state import get_state_observer
@@ -365,7 +365,7 @@ class DeepHermes3Engine:
             self._batch_queue = asyncio.Queue(maxsize=self._batch_max_size * 2)
 
         if self._batch_worker_task is None or self._batch_worker_task.done():
-            self._batch_worker_task = asyncio.create_task(batch_worker_loop(self))
+            self._batch_worker_task = safe_create_task(batch_worker_loop(self))
 
     async def flush_all(self, timeout: float = 5.0) -> int:
         """Flush all pending batch items."""
@@ -414,6 +414,8 @@ class DeepHermes3Engine:
             tokens,
             max_tokens=max_tokens,
             temp=temperature,
+            kv_bits=self._get_adaptive_kv_bits(),
+            max_kv_size=self._max_kv_size,
         )
         return self._tokenizer.decode(tokens[prompt_tokens:])
 

@@ -1,12 +1,18 @@
 """
 Plugin registry for capability adapters.
 
-Provides CapabilityPluginRegistry — a lightweight registration layer for
+Private submodule of :mod:`hledac.universal.capabilities` (ISSUE #19 consolidation).
 
-
-capability plugins that validates module presence via importlib.util.find_spec()
+Provides ``CapabilityPluginRegistry`` — a lightweight registration layer for
+capability plugins that validates module presence via ``importlib.util.find_spec()``
 without triggering any network I/O or full module imports.
+
+Moved here from the standalone ``capabilities_registry.py`` so that
+``hledac.universal.capabilities`` is the single source of truth for all
+capability concerns (model lifecycle + routing + plugin registration).
 """
+
+from __future__ import annotations
 
 import importlib.util
 import os
@@ -33,7 +39,7 @@ class CapabilityPluginRegistry:
 
     The registry is purely declarative: ``register_capability()`` records
     the metadata; actual capability loading is handled by
-    ``CapabilityRegistry.load()`` in ``capabilities.py``.
+    ``CapabilityRegistry.load()`` in ``hledac.universal.capabilities``.
     """
 
     __slots__ = ("_registrations",)
@@ -84,8 +90,13 @@ class CapabilityPluginRegistry:
         )
 
     def is_registered(self, cap: str) -> bool:
-        """Check whether a capability has been registered."""
+        """Check whether a capability has been registered (string key)."""
         return cap in self._registrations
+
+    def is_available(self, cap: str) -> bool:
+        """Return True only if ``cap`` is a registered, env-enabled adapter."""
+        reg = self._registrations.get(cap)
+        return reg is not None and reg.env_enabled
 
     def get(self, cap: str) -> CapabilityRegistration | None:
         """Return the registration record for a capability, or None if not registered."""
@@ -94,3 +105,27 @@ class CapabilityPluginRegistry:
     def registrations(self) -> dict[str, CapabilityRegistration]:
         """Return a copy of all registrations."""
         return dict(self._registrations)
+
+
+# Single process-wide plugin registry (lazy singleton accessor).
+_plugin_registry_singleton: CapabilityPluginRegistry | None = None
+
+
+def get_capability_registry() -> CapabilityPluginRegistry:
+    """Return the process-wide :class:`CapabilityPluginRegistry` singleton.
+
+    Consolidated home for the previously-broken
+    ``hledac.universal.core.capabilities_registry.get_capability_registry``
+    import path (ISSUE #19).
+    """
+    global _plugin_registry_singleton
+    if _plugin_registry_singleton is None:
+        _plugin_registry_singleton = CapabilityPluginRegistry()
+    return _plugin_registry_singleton
+
+
+__all__ = [
+    "CapabilityRegistration",
+    "CapabilityPluginRegistry",
+    "get_capability_registry",
+]

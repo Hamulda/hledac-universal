@@ -114,14 +114,15 @@ class SystemMonitor:
         try:
             if psutil is None:
                 return {"state": self._state.value}
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            memory = psutil.virtual_memory()
+            cpu_percent = psutil.cpu_percent(interval=0.0)
+            from hledac.universal.utils.sys_metrics import system_memory_sync
+            memory = system_memory_sync()
             stats = {
                 "state": self._state.value,
                 "cpu_percent": cpu_percent,
                 "memory_percent": memory.percent,
-                "memory_used_mb": memory.used / (1024 * 1024),
-                "memory_available_mb": memory.available / (1024 * 1024),
+                "memory_used_mb": memory.used_gib * 1024,
+                "memory_available_mb": memory.available_gib * 1024,
             }
             try:
                 temps = psutil.sensors_temperatures()

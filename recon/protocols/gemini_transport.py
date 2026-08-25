@@ -310,8 +310,9 @@ async def crawl_capsule(
     Returns:
         List of GeminiFinding from crawled content
     """
+    from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
     findings: list[GeminiFinding] = []
-    seen_urls: set[str] = set()
+    seen_urls = make_url_dedup(capacity=50_000)
 
     to_visit: list[str] = [url]
     start_time = time.monotonic()
@@ -385,8 +386,9 @@ async def geminispace_to_findings(
 
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
+    from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
     findings: list = []
-    seen_urls: set[str] = set()
+    seen_urls = make_url_dedup(capacity=10_000)
 
     try:
         # Search via Kennedy

@@ -187,7 +187,7 @@ async def run_wayback_prelude_lane(
 
     Bounded: no hard timeout, writes to duckdb_store via bg_tasks.
     """
-    from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
+    from hledac.universal.recon.wayback_diff_miner import WaybackDiffMiner
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
     from hledac.universal.runtime.source_finding_bridge import wayback_results_to_findings
 
@@ -327,7 +327,7 @@ async def _init_doh_adapter(result: Any) -> tuple[Any, Any] | tuple[None, None]:
     """
     adapter = None
     try:
-        from hledac.universal.intel.doh_lane import DOHAdapter
+        from hledac.universal.recon.doh_lane import DOHAdapter
 
         adapter = DOHAdapter()
     except Exception as init_exc:

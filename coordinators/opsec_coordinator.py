@@ -375,7 +375,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> dict[str, Any]:
         """Check for data leaks using DataLeakHunter."""
         try:
-            from hledac.universal.intel.data_leak_hunter import DataLeakHunter
+            from hledac.universal.recon.data_leak_hunter import DataLeakHunter
 
             hunter = DataLeakHunter()
             await hunter.initialize()
@@ -471,7 +471,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> dict[str, Any]:
         """Stealth web scraping with anti-detection via StealthWebScraper."""
         try:
-            from hledac.universal.intel.stealth_crawler import StealthWebScraper
+            from hledac.universal.recon.stealth_crawler import StealthWebScraper
 
             scraper = StealthWebScraper()
             await scraper.initialize()
@@ -709,7 +709,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> dict[str, Any]:
         """Resurrect content from web archives using ArchiveResurrector."""
         try:
-            from hledac.universal.intel.archive_discovery import ArchiveResurrector
+            from hledac.universal.recon.archive_discovery import ArchiveResurrector
 
             resurrector = ArchiveResurrector()
             await resurrector.initialize()

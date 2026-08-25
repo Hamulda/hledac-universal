@@ -984,4 +984,4 @@ async def benchmark_streaming_link_predictor(
             "implementation": "rust" if predictor.is_available else "python",
         }
 
-    return asyncio.run(run_benchmark())
+    return await run_benchmark()

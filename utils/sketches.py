@@ -23,11 +23,9 @@ logger = logging.getLogger(__name__)
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    import mlx.core as mx
-except ImportError:
-    mx = None
+mx = lazy_import("mlx.core", default=None)
 
 try:
     import lmdb

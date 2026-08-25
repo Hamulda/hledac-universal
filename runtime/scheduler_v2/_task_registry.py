@@ -856,7 +856,7 @@ def _make_unregister_callback(task: asyncio.Task[Any]) -> Any:
             loop = asyncio.get_running_loop()
             # Schedule async unregister - fire-and-forget is safe here since
             # unregister is idempotent and we don't need to await completion
-            loop.call_soon_threadsafe(lambda: asyncio.create_task(registry.unregister(done_task)))
+            loop.call_soon_threadsafe(lambda: safe_create_task(registry.unregister(done_task)))
         except Exception:  # noqa: BLE001
             pass
 

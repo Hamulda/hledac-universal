@@ -192,7 +192,7 @@ class UnifiedLMDB:
         "_lock",
         "_shrink_count",
         "_shrink_failures",
-        "_reopen_in_progress",
+        "_reopen_event",
         "_finalizer",
         "_map_full_count",
     )
@@ -220,7 +220,7 @@ class UnifiedLMDB:
         # RES-02: Shrink telemetry
         self._shrink_count: int = 0
         self._shrink_failures: int = 0
-        self._reopen_in_progress: bool = False  # guards against concurrent reopens
+        self._reopen_event: threading.Event = threading.Event()  # set()=idle, clear()=reopen in progress
         # MEM-UMA-001: MDB_MAP_FULL event counter
         self._map_full_count: int = 0
 
@@ -239,24 +239,17 @@ class UnifiedLMDB:
         # Fast path — check without lock
         if self._closed:
             raise RuntimeError("UnifiedLMDB is closed (emergency shrink previously failed)")
-        if self._initialized and not self._reopen_in_progress:
+        if self._initialized and self._reopen_event.is_set():
             return
 
         # Slow path — may need to wait for in-progress reopen
         with self._lock:
             if self._closed:
                 raise RuntimeError("UnifiedLMDB is closed (emergency shrink previously failed)")
-            # Wait for any in-progress reopen to complete
-            spin_count = 0
-            while self._reopen_in_progress:
-                # Exponential backoff: 0.05s base, 2x factor, 1.0s ceiling
-                # Series: 0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.0, ... (~2.5s at 7 spins)
-                # Cap at 10 spins: 10 × 1.0s ceiling = 10s max timeout
-                if spin_count >= 10:
-                    raise RuntimeError("UnifiedLMDB reopen timed out")
-                sleep_time = min(0.05 * math.exp(0.5 * spin_count), 1.0)
-                time.sleep(sleep_time)
-                spin_count += 1
+            # M7 FIX: replace busy-wait spin-loop with a zero-CPU threading.Event wait.
+            # Event is set() when idle; clear() while a reopen is in progress.
+            if not self._reopen_event.wait(timeout=10):
+                raise RuntimeError("UnifiedLMDB reopen timed out")
             if self._initialized:
                 return
 
@@ -617,7 +610,7 @@ class UnifiedLMDB:
         # Fast path — check without lock
         if self._closed:
             return
-        if self._reopen_in_progress:
+        if not self._reopen_event.is_set():
             logger.debug("[LMDB-UNIFIED] shrink already in progress, skipping")
             return
 
@@ -625,9 +618,9 @@ class UnifiedLMDB:
             # Double-check inside lock
             if self._closed:
                 return
-            if self._reopen_in_progress:
+            if not self._reopen_event.is_set():
                 return
-            self._reopen_in_progress = True
+            self._reopen_event.clear()  # signal reopen in progress
 
         try:
             try:
@@ -700,7 +693,7 @@ class UnifiedLMDB:
                     len(self._sub_dbs),
                 )
         finally:
-            self._reopen_in_progress = False
+            self._reopen_event.set()  # signal reopen complete
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -1014,7 +1007,7 @@ def unified_lmdb_stats() -> dict[str, Any]:
                 # RES-02: Shrink telemetry
                 "shrink_count": getattr(store, "_shrink_count", 0),
                 "shrink_failures": getattr(store, "_shrink_failures", 0),
-                "reopen_in_progress": getattr(store, "_reopen_in_progress", False),
+                "reopen_in_progress": bool(getattr(store, "_reopen_event", None) is not None and not getattr(store, "_reopen_event").is_set()),
                 "info": info,  # lmdb env.info() returns a dict
             }
         except Exception as exc:

@@ -104,6 +104,12 @@ from hledac.universal.project_types import (
     WipeStandard,
 )
 
+from hledac.universal.hledac_types.canonical import (
+    CanonicalIOC,
+    dedup_canonical_iocs,
+    make_canonical_ioc,
+)
+
 __all__ = [
     # Enums
     "ActionResultType",
@@ -195,4 +201,5 @@ __all__ = [
     # UNIFIED-004: Micro-sprint types
     "MicroSprintPlan",
     "MicroSprintResult",
+    "CanonicalIOC",
 ]

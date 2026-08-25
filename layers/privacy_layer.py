@@ -1,4 +1,6 @@
 """
+from __future__ import annotations
+
 Privacy Layer
 ============
 
@@ -25,7 +27,6 @@ warnings.warn(
     stacklevel=2,
 )
 
-from __future__ import annotations
 
 import logging
 from dataclasses import field

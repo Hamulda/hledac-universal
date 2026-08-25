@@ -19,12 +19,12 @@ GHOST_INVARIANTS:
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
 import httpx
 
+from hledac.universal._core.env_config import ENV
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.security.secrets_scrubber import safe_error_log
 from hledac.universal.transport.circuit_breaker import (
@@ -43,7 +43,7 @@ RATE_LIMIT_KEY = "greynoise_api"
 
 # [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
 # Gaussian sigma = 0.6s gives decorrelated inter-request intervals.
-_GREYNOISE_JITTER_SIGMA_S: float = float(os.environ.get("HLEDAC_GREYNOISE_JITTER_SIGMA_S", "0.6"))
+_GREYNOISE_JITTER_SIGMA_S: float = ENV.get_float("HLEDAC_GREYNOISE_JITTER_SIGMA_S", default=0.6)
 
 # F266: Circuit breaker — domain for GreyNoise API
 _CB_DOMAIN = "api.greynoise.io"
@@ -74,7 +74,8 @@ def _record_greynoise_failure(is_timeout: bool = False, kind: str = "") -> None:
 
 
 def _get_api_key() -> str | None:
-    return os.environ.get("GREYNOISE_API_KEY") or None
+    """Resolve the GreyNoise key: canonical HLEDAC_GREYNOISE_API_KEY, then GREYNOISE_API_KEY."""
+    return ENV.get_api_key("HLEDAC_GREYNOISE_API_KEY") or None
 
 
 def _build_findings(ip: str, raw_result: dict, ts_now: float) -> list[CanonicalFinding]:

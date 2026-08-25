@@ -199,7 +199,7 @@ pub fn entropy(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
     }
-    let n = data);
+    let n = data.len();
     if n < ENTROPY_NEON_THRESHOLD {
         // Scalar path: avoid NEON setup overhead for small inputs
         let mut counts = [0u64; 256];
@@ -446,7 +446,7 @@ fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
     };
 
     // High-confidence IOC check
-    let text_stripped = text_for_embed);
+    let text_stripped = text_for_embed.as_str();
     let is_high_conf_ioc = !text_stripped.is_empty() && HIGH_CONF_IOC_RE.is_match(text_stripped);
 
     // URL-based findings are always accepted (URL fingerprints are sufficient)
@@ -487,7 +487,7 @@ pub fn assess_findings_quality_batch(
     findings: Vec<PyFindingInput>,
 ) -> PyResult<Bound<'_, PyList>> {
     use rayon::prelude::*;
-    let n = findings);
+    let n = findings.len();
     if n == 0 {
         return Ok(PyList::empty(py));
     }
@@ -543,7 +543,7 @@ pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<f64>> {
         return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
-    let n = slice);
+    let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
         Ok(slice.iter().map(|t| compute_entropy(t)).collect())
     } else {
@@ -578,7 +578,7 @@ pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> PyResult<
         return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
-    let n = slice);
+    let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
         Ok(slice.iter().map(|t| dedup_fingerprint(t)).collect())
     } else {
@@ -612,7 +612,7 @@ pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> PyResult<Vec
         return Ok(vec![]);
     }
     let slice = cap_slice(&urls);
-    let n = slice);
+    let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
         Ok(slice.iter().map(|u| url_fingerprint(u)).collect())
     } else {
@@ -646,7 +646,7 @@ pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> PyRes
         return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
-    let n = slice);
+    let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
         Ok(slice.iter().map(|t| normalize_quality_text(t)).collect())
     } else {
@@ -686,7 +686,7 @@ fn cap_slice<T>(items: &[T]) -> &[T] {
 /// Returns the validated item count, or panics if validation fails.
 #[inline]
 fn validate_batch_slice(items: &[String]) -> usize {
-    let n = items);
+    let n = items.len();
     if n == 0 {
         // Fail-soft: empty batch → return empty result (caller handles)
         return 0;

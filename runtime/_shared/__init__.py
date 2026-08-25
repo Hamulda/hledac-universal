@@ -2,7 +2,7 @@
 Shared utilities for runtime modules.
 """
 
-from hledac.universal.runtime._shared.evidence_log_shared import (
+from hledac.universal.evidence.shared import (
     evidence_log_factory,
     evidence_log_init,
 )

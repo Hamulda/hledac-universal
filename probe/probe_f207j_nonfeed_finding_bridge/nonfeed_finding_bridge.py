@@ -31,11 +31,9 @@ import hashlib
 import re
 import time
 from typing import Any
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-except ImportError:
-    CanonicalFinding = None
+CanonicalFinding = lazy_import("hledac.universal.knowledge.duckdb_store:CanonicalFinding", default=None)
 __all__ = [
     "ct_results_to_findings",
     "wayback_results_to_findings",

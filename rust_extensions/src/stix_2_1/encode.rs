@@ -170,7 +170,7 @@ pub fn encode_indicator(finding: &Map<String, Value>) -> Option<Value> {
     indicator.insert(
         "valid_until".to_string(),
         Value::String(future_timestamp(90)),
-    ); // 90 days validity
+    );// 90 days validity
     indicator.insert(
         "labels".to_string(),
         Value::Array(vec![

@@ -37,6 +37,10 @@ from hledac.universal.utils.mlx_cache import (
 from hledac.universal.utils.mlx_memory import (
     mlx_cleanup_decorator as _mlx_cleanup_decorator_canonical,
 )
+from hledac.universal.utils.mlx_cache import (
+    mlx_cleanup_sync as _canonical_cleanup_sync,
+    mlx_cleanup_aggressive as _canonical_cleanup_aggressive,
+)
 
 logger = logging.getLogger(__name__)
 

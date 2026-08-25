@@ -343,7 +343,7 @@ async def _search_pastebin(query: str, session: httpx.AsyncClient) -> list[Paste
     return findings
 
 
-async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFinding]:
+async def _search_paste_gg(query: str, session: httpx.AsyncClient) -> list[PasteFinding]:
     """Search paste.gg for query via their API."""
     findings: list[PasteFinding] = []
     try:

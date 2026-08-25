@@ -29,8 +29,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-
 # Lazy imports for compression.zstd (Python 3.14 stdlib)
 _zstd: object = None
 
@@ -132,7 +130,7 @@ class SprintExportBuffer:
         except OSError:  # noqa: BLE001
             pass
 
-        self._flush_task = asyncio.create_task(
+        self._flush_task = safe_create_task(
             self._flush_loop(), name=f'sprint_buffer_flush_{self._sprint_id}'
     )
 
@@ -191,7 +189,7 @@ class SprintExportBuffer:
                 async with asyncio.timeout(self._FLUSH_INTERVAL_S):
                     await self._shutdown.wait()
                     break
-            except asyncio.TimeoutError:  # noqa: BLE001
+            except TimeoutError:  # noqa: BLE001
                 pass
 
             now = time.monotonic()
@@ -238,7 +236,7 @@ class SprintExportBuffer:
                 await asyncio.wait_for(
                     asyncio.shield(self._flush_task), timeout=3.0
     )
-            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
+            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                 pass
             self._flush_task = None
 
@@ -305,7 +303,7 @@ class SprintExportBuffer:
                 await asyncio.wait_for(
                     asyncio.shield(self._flush_task), timeout=2.0
     )
-            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
+            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                 pass
             self._flush_task = None
 

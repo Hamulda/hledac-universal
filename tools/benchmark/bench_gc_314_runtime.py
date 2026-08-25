@@ -47,11 +47,9 @@ import time
 from dataclasses import field
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    import psutil
-except ImportError:
-    psutil = None
+psutil = lazy_import("psutil", default=None)
 
 
 class GCSnapshot(Struct):

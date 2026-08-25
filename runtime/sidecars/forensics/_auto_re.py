@@ -331,18 +331,17 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
         [META]-012: Extracts timestamp from finding dict for observed_at.
         """
         try:
-            from hledac.universal.knowledge.graph_service import DuckPGQGraph
+            from hledac.universal.knowledge.graph_service import upsert_ioc
 
-            graph = DuckPGQGraph.get_instance()
             for finding in findings:
                 # [META]-012: Extract observed_at from finding timestamp
                 observed_at = finding.get("ts") or finding.get("timestamp") or None
-                graph.upsert_ioc(
-                    ioc_value=finding["ioc_value"],
-                    ioc_type=finding["ioc_type"],
-                    confidence=finding.get("confidence", 0.5),
-                    source=finding["source"],
-                    observed_at=observed_at,
-                )
+                upsert_ioc(
+                    value=finding["ioc_value"],
+                        ioc_type=finding["ioc_type"],
+                        confidence=finding.get("confidence", 0.5),
+                        source=finding["source"],
+                        observed_at=observed_at,
+                    )
         except Exception as e:
             logger.debug("[AUTO-RE] graph upsert failed: %s", e)

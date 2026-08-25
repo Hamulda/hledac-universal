@@ -71,8 +71,6 @@ from enum import IntEnum
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from operator import attrgetter
-if TYPE_CHECKING:
-
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
 
@@ -204,8 +202,8 @@ def _register_lock(
 
 def register_lock(
     category: LockCategory,
-    lock: threading.Lock | threading.RLock,
-    name: str,
+    lock: threading.Lock | threading.RLock | None = None,
+    name: str | None = None,
 ) -> None:
     """
     Registruj lock v centralizovaném registru pro prevenci deadlocku.
@@ -231,6 +229,12 @@ def register_lock(
           registrace se STÁLE DOPORUČUJE pro audit, ale není kritická.
           Kritická je pouze pro global/module-level locks.
     """
+    # Decorator form: @register_lock(LockCategory.X) wrapping a 0-arg lock
+    # factory. Mirrors auto_register() so the single canonical registrar API
+    # supports both the call form (category, lock, name) and the decorator form.
+    if lock is None and name is None:
+        return auto_register(category)
+
     # threading.Lock() returns _thread.lock, threading.RLock() returns _thread.RLock
     # Check using type names instead of isinstance (Lock/RLock are factory functions, not types)
     lock_type_name = type(lock).__name__

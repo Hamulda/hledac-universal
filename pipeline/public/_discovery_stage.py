@@ -17,8 +17,6 @@ from typing import TYPE_CHECKING, Any
 
 from compat.msgspec_gc_compat import Struct
 
-if TYPE_CHECKING:
-
 from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
 from hledac.universal.pipeline._soa_types import PageBatch
 

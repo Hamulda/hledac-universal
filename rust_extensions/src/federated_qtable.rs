@@ -129,7 +129,7 @@ impl RustFederatedQTable {
         let next_key = Self::make_key(lane, next_state_key);
 
         let next_max_q = {
-            let guard = qtable);
+            let guard = qtable.as_str();
             guard
                 .iter()
                 .filter(|(k, _)| {
@@ -185,7 +185,7 @@ impl RustFederatedQTable {
 
         // Collect all entries under read lock.
         let all_entries: Vec<(String, f64)> = {
-            let guard = qtable);
+            let guard = qtable.as_str();
             guard.iter().map(|(k, v)| (k.clone(), *v)).collect()
         };
 
@@ -198,7 +198,7 @@ impl RustFederatedQTable {
         sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let to_evict: Vec<String> = sorted.into_iter().take(n).map(|(k, _)| k));
-        let evicted = to_evict);
+        let evicted = to_evict.as_str();
 
         {
             let mut guard = qtable);
@@ -240,7 +240,7 @@ impl RustFederatedQTable {
             return String::new();
         }
         let key_prefix = Self::make_key(lane, state_key);
-        let guard = self.qtable);
+        let guard = self.qtable.as_str();
         let best = actions
             .iter()
             .map(|action| {
@@ -287,7 +287,7 @@ impl RustFederatedQTable {
     /// Rayon parallel — each item processed independently.
     /// ISSUE-011 fix (continued): parking_lot::RwLock replaces DashMap for PyO3 GIL safety.
     pub fn update_batch(&self, items: Vec<(String, String, String, f64, String)>) -> usize {
-        let n = items);
+        let n = items.as_str();
         if n == 0 {
             return 0;
         }
@@ -385,7 +385,7 @@ impl RustFederatedQTable {
     /// persist_to_file(path) -> bool
     /// Atomic bincode write with 2 MiB cap. Returns true on success.
     pub fn persist_to_file(&self, path: String) -> bool {
-        let data = self);
+        let data = self.iter();
 
         if data.len() > 3072 {
             // Hard cap: 3 lanes × 1024 entries
@@ -480,7 +480,7 @@ static MODULE_QTABLE: std::sync::LazyLock<RwLock<AHashMap<String, f64>>> =
 pub fn rust_federated_qtable_batch_update(
     items: Vec<(String, String, String, f64, String)>,
 ) -> usize {
-    let n = items);
+    let n = items.as_str();
     if n == 0 {
         return 0;
     }
@@ -498,7 +498,7 @@ pub fn rust_federated_qtable_batch_update(
                 let next_key = format!("{}::{}", lane, next_state_key);
 
                 let next_max_q = {
-                    let guard = qtable);
+                    let guard = qtable.as_str();
                     guard
                         .iter()
                         .filter(|(k, _)| {
@@ -550,7 +550,7 @@ mod tests {
             1024,
         );
         assert_eq!(total_count.load(Ordering::Relaxed), 1);
-        let guard = qtable);
+        let guard = qtable.as_str();
         let q = guard.get("surface::state_0|fetch"));
         assert!(*q > 0.0, "Q-value should be positive after reward");
     }
@@ -600,7 +600,7 @@ mod tests {
 
         // With atomic CAS, Q-value should converge to the correct value after 100 updates.
         // Not a lost update (which would give wrong Q-value).
-        let guard = qtable);
+        let guard = qtable.as_str();
         let q = guard.get("surface::state_0|fetch"));
         assert!(
             *q > 0.0 && *q <= 1.0,
@@ -629,7 +629,7 @@ mod tests {
         assert_eq!(total_count.load(Ordering::Relaxed), 3);
 
         // Remaining entries should be the top 3 Q-values.
-        let guard = qtable);
+        let guard = qtable.as_str();
         assert!(guard.get("lane::state_4|action").is_some()); // Q=5
         assert!(guard.get("lane::state_3|action").is_some()); // Q=4
         assert!(guard.get("lane::state_2|action").is_some()); // Q=3
@@ -668,7 +668,7 @@ mod tests {
         );
 
         // Same state_key, different lanes — must NOT collide.
-        let guard = qtable);
+        let guard = qtable.as_str();
         let surf_q = guard.get("surface::s|fetch"));
         let dark_q = guard.get("dark::s|scan"));
         assert_ne!(

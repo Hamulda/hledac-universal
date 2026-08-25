@@ -29,7 +29,6 @@ Search:
 import asyncio
 import hashlib
 import logging
-import os
 
 # ISSUE-011: Tantivy fulltext search — thread-safe lazy import
 import threading
@@ -43,6 +42,7 @@ from polars import DataFrame
 from rank_bm25 import BM25Okapi
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal._core.env_config import ENV
 from hledac.universal.knowledge.duckdb_parallel import numpy_rrf_fusion
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
@@ -76,10 +76,32 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 logger = logging.getLogger(__name__)
 DEFAULT_FTS_DB = "discovery_fts.duckdb"
-MAX_BATCH_SIZE = 5000
-BM25_K = 60
 _WAL_SUFFIX = ".wal"
-_WAL_MAX_SIZE_MB = 64
+
+# ── L1: tuning knobs ────────────────────────────────────────────────────────────
+# Names are declared in _core.feature_flags.FeatureFlag (FTS_* members) and read
+# here through the cached ENV accessor. Raw os.environ.get() is an anti-pattern
+# per _core/env_config.py — it re-parses on every instantiation and bypasses the
+# HLEDAC_* → GHOST_* legacy fallback.
+#
+# Every knob is clamped: an operator may tune the M1 8GB profile, never breach it.
+_DEFAULT_MAX_BATCH_SIZE = 5000
+_MAX_BATCH_SIZE_CEILING = 50_000  # >50k rows/append spikes the Arrow buffer past the 1 GiB orchestrator slice
+_DEFAULT_WAL_MAX_SIZE_MB = 64
+_WAL_MAX_SIZE_MB_CEILING = 512  # WAL is replayed fully into RAM on restart
+_DEFAULT_RRF_K = 60  # Cormack et al. 2009 reciprocal-rank-fusion constant
+_RRF_K_CEILING = 1000
+
+MAX_BATCH_SIZE: int = min(
+    max(ENV.get_int("HLEDAC_FTS_MAX_BATCH_SIZE", default=_DEFAULT_MAX_BATCH_SIZE), 1),
+    _MAX_BATCH_SIZE_CEILING,
+)
+BM25_K: int = min(max(ENV.get_int("HLEDAC_FTS_RRF_K", default=_DEFAULT_RRF_K), 1), _RRF_K_CEILING)
+_WAL_MAX_SIZE_MB: int = min(
+    max(ENV.get_int("HLEDAC_FTS_WAL_MAX_MB", default=_DEFAULT_WAL_MAX_SIZE_MB), 1),
+    _WAL_MAX_SIZE_MB_CEILING,
+)
+_WAL_FLUSH_SIZE_BYTES: int = _WAL_MAX_SIZE_MB * 1024 * 1024
 
 # Schema version for migration handling (ISSUE #11)
 _SCHEMA_VERSION = 1
@@ -171,7 +193,7 @@ class DuckDBFTSStore:
         self._tantivy_dirty = False  # ISSUE-011: Tantivy index sync flag
         self._wal_path: Path | None = None
         self._wal_dirty = False
-        self._wal_flush_size = int(os.environ.get("HLEDAC_FTS_WAL_MAX_MB", str(_WAL_MAX_SIZE_MB))) * 1024 * 1024
+        self._wal_flush_size = _WAL_FLUSH_SIZE_BYTES
 
     async def initialize(self) -> None:
         """Inicializuje DuckDB schema + nacte existujici BM25 indexy."""

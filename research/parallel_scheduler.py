@@ -30,8 +30,6 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 from compat.msgspec_gc_compat import Struct
 
-if TYPE_CHECKING:
-
 try:
     import msgspec
 
@@ -229,7 +227,7 @@ class ParallelResearchScheduler:
                 async with asyncio.timeout(poll_interval):
                     await self._all_done.wait()
                     return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 elapsed += poll_interval
                 if timeout is not None and elapsed >= timeout:
                     return
@@ -270,7 +268,7 @@ class ParallelResearchScheduler:
         if clear_completed:
             self.clear_completed()
 
-    def __enter__(self) -> "ParallelResearchScheduler":
+    def __enter__(self) -> ParallelResearchScheduler:
         return self
 
     def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> bool:
@@ -348,7 +346,7 @@ class ParallelResearchScheduler:
             try:
                 async with asyncio.timeout(0.5):
                     _, _, task = await self._io_queue.get()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 async with self._get_lock():
                     if self._pending == 0 and self._io_queue.empty():
                         break
@@ -363,7 +361,7 @@ class ParallelResearchScheduler:
             try:
                 async with asyncio.timeout(0.5):
                     _, _, task = await self._cpu_queue.get()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 async with self._get_lock():
                     if self._pending == 0 and self._cpu_queue.empty():
                         break
@@ -387,7 +385,7 @@ class ParallelResearchScheduler:
                     f"Task {task.task_id} cancelled"
                 ))
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             async with self._get_lock():
                 # D9 FIX: Use bounded dict with LRU eviction
                 self._set_completed(task.task_id, TimeoutError(
@@ -431,7 +429,7 @@ class ParallelResearchScheduler:
                     f"Task {task.task_id} cancelled"
                 ))
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             async with self._get_lock():
                 # D9 FIX: Use bounded dict with LRU eviction
                 self._set_completed(task.task_id, TimeoutError(

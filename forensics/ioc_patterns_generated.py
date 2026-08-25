@@ -36,7 +36,7 @@ _TRACKING_PARAMS = {
 # DO NOT edit manually — edit ioc_patterns.rs and regenerate.
 
 _IOC_PATTERNS: list[tuple[str, str]] = [
-    ("url", r"https?://[^\s<>\"\]\[]+"),  # URL_PAT — must be BEFORE domain (alternation order)
+    ("url", r'''https?://[^\s<>"']+'''),  # URL_PAT — must be BEFORE domain (alternation order)
     (
         "ipv4",
         r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",

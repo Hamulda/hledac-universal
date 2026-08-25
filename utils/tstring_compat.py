@@ -40,8 +40,6 @@ import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-if TYPE_CHECKING:
-
 __all__ = [
     "SafeSQL",
     "SafeJSON", 

@@ -145,7 +145,7 @@ _aioquic_available: bool = False
 _curl_cffi_checked: bool = False
 _curl_cffi_available: bool = False
 # PATCH 5: bounded task tracking for speculative probes — replaces fire-and-forget
-# asyncio.create_task() with a tracked set + done-callback. Max size enforced
+# safe_create_task() with a tracked set + done-callback. Max size enforced
 # by _MAX_PROBE_TASKS; excess probes are dropped (advisory, never blocks).
 _probe_tasks: set[asyncio.Task] = set()
 # Upper bound on concurrent speculative probes — prevents unbounded growth.

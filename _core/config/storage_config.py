@@ -145,7 +145,7 @@ class StorageConfig(Struct, frozen=True, kw_only=True):
             ...
         """
         libc_perf_opt = os.environ.get("LIBC_PERF_OPT", "0").lower() in ("1", "true", "yes")
-        lmdb_mb = cls._env_int("GHOST_LMDB_MAX_SIZE_MB", 256)
+        lmdb_mb = cls._env_int("HLEDAC_LMDB_MAX_SIZE_MB", cls._env_int("GHOST_LMDB_MAX_SIZE_MB", 256))
         duckdb_threads = cls._env_int("HLEDAC_DUCKDB_THREADS", 2)
         duckdb_inprocess = os.environ.get("HLEDAC_DUCKDB_INPROCESS", "1").lower() in ("1", "true", "yes")
 

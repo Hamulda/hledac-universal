@@ -33,8 +33,6 @@ import logging
 from typing import TYPE_CHECKING
 from dataclasses import dataclass
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 from rust_extensions.integrations import TelemetryIntegration, TelemetryCounter, TelemetryHistogram

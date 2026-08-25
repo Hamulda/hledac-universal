@@ -126,7 +126,7 @@ static TYPE_PREFIX_HASH: LazyLock<[u64; 10]> = LazyLock::new(|| {
 /// R4-05: Build a composite key from type index + normalized value (no string allocs).
 #[inline]
 fn make_ioc_key(ioc_type: &IocType, normalized: &str) -> u64 {
-    let idx = ioc_type);
+    let idx = ioc_type.as_str();
     TYPE_PREFIX_HASH[idx].wrapping_add(xxh3_64(normalized.as_bytes()))
 }
 
@@ -136,7 +136,7 @@ fn normalize_ioc(value: &str, ioc_type: &IocType) -> String {
     }
     match ioc_type {
         IocType::Domain => {
-            let lower = value);
+            let lower = value.as_str();
             lower.strip_prefix("www.").unwrap_or(&lower).to_string()
         }
         IocType::Md5 | IocType::Sha1 | IocType::Sha256 => value.to_lowercase(),
@@ -223,7 +223,7 @@ impl MmapIocDedupStore {
         };
 
         if !force_new && p.exists() {
-            let _ = store);
+            let _ = store.as_str();
         }
         Ok(store)
     }
@@ -243,7 +243,7 @@ impl MmapIocDedupStore {
         let mmap = unsafe { Mmap::map(file_ref) }
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("mmap failed: {}", e)))?;
 
-        let file_len = mmap);
+        let file_len = mmap.as_str();
         if file_len < MMAP_HEADER_SIZE {
             return Ok(()); // Truncated header, start fresh
         }
@@ -393,7 +393,7 @@ impl MmapIocDedupStore {
         // ISSUE-1 FIX: Single RwLock read — get entries.len() and state bytes together.
         // Previously called entries.read() twice: once for len() and once in get_state_bytes().
         let (num_entries, entries_bytes) = {
-            let entries = self.entries);
+            let entries = self.entries.iter();
             let num_entries = entries.len() as u32;
             let bytes = Self::_serialize_entries(&entries);
             (num_entries, bytes)
@@ -444,7 +444,7 @@ impl MmapIocDedupStore {
         if let Some(parent) = Path::new(&self.file_path).parent() {
             if !parent.as_os_str().is_empty() {
                 if let Ok(dir_file) = std::fs::OpenOptions::new().write(true).open(parent) {
-                    let _ = dir_file);
+                    let _ = dir_file.as_str();
                 }
             }
         }
@@ -466,8 +466,8 @@ impl MmapIocDedupStore {
         let mut bytes = Vec::with_capacity(4096);
         for (k, e) in entries.iter() {
             bytes.extend_from_slice(&k.to_le_bytes());
-            let entry = e);
-            let val_bytes = entry.normalized_value);
+            let entry = e.as_str();
+            let val_bytes = entry.normalized_value.as_str();
             bytes.extend_from_slice(&(val_bytes.len() as u32).to_le_bytes());
             bytes.extend_from_slice(val_bytes);
             bytes.push(entry.ioc_type as u8);
@@ -482,7 +482,7 @@ impl MmapIocDedupStore {
 
 impl Drop for MmapIocDedupStore {
     fn drop(&mut self) {
-        let _ = self);
+        let _ = self.as_str();
     }
 }
 
@@ -629,7 +629,7 @@ impl MmapIocDedupStore {
                 .collect()
         });
 
-        let entries = self.entries);
+        let entries = self.entries.iter();
         prepped
             .iter()
             .map(|(key, is_empty_sentinel)| {
@@ -679,7 +679,7 @@ impl MmapIocDedupStore {
 
     pub fn get_by_type(&self, ioc_type_str: &str) -> Vec<String> {
         let target_type = IocType::from_str(ioc_type_str);
-        let entries = self.entries);
+        let entries = self.entries.iter();
         entries
             .iter()
             .filter(|(_k, e)| e.read().ioc_type == target_type)
@@ -689,12 +689,12 @@ impl MmapIocDedupStore {
 
     pub fn get_entries_by_type(&self, ioc_type_str: &str) -> Vec<(String, u32, u32, u32, f32)> {
         let target_type = IocType::from_str(ioc_type_str);
-        let entries = self.entries);
+        let entries = self.entries.iter();
         entries
             .iter()
             .filter(|(_k, e)| e.read().ioc_type == target_type)
             .map(|(_k, e)| {
-                let entry = e);
+                let entry = e.as_str();
                 (
                     entry.normalized_value.clone(),
                     entry.first_seen_sprint,
@@ -964,7 +964,7 @@ impl IocDedupStore {
         bytes.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
         for (k, e) in self.entries.iter() {
             bytes.extend_from_slice(&k.to_le_bytes());
-            let val_bytes = e.normalized_value);
+            let val_bytes = e.normalized_value.as_str();
             bytes.extend_from_slice(&(val_bytes.len() as u32).to_le_bytes());
             bytes.extend_from_slice(val_bytes);
             bytes.push(e.ioc_type as u8);

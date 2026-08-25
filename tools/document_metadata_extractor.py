@@ -222,9 +222,9 @@ class _DocumentMetadataExtractor:
             cursor = self._conn.execute("SELECT value, timestamp FROM doc_meta_cache WHERE key = ?", (key,))
             row = cursor.fetchone()
             if row and self._is_cache_valid(row[1]):
-                import json
+                from hledac.universal.utils.codec import json_loads, json_dumps
 
-                return json.loads(row[0])
+                return json_loads(row[0])
         except Exception:  # noqa: BLE001
             pass
         return None
@@ -234,11 +234,10 @@ class _DocumentMetadataExtractor:
         if not self._conn or not result:
             return
         try:
-            import json
             import time
 
             key = self._get_cache_key(content)
-            value = json.dumps(result)
+            value = json_dumps(result)
             timestamp = int(time.time())
             self._conn.execute(
                 "INSERT OR REPLACE INTO doc_meta_cache (key, value, timestamp) VALUES (?, ?, ?)",

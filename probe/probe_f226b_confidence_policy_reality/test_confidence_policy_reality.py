@@ -42,7 +42,7 @@ class TestSourceBaselinesReal:
         Source test: compute_confidence has no local '_BASELINES =' assignment.
         The function body must not contain '_BASELINES =' (case-sensitive).
         """
-        from intelligence.confidence_policy import compute_confidence
+        from hledac.universal.recon.confidence_policy import compute_confidence
 
         source = inspect.getsource(compute_confidence)
         matches = re.findall(r"_BASELINES\s*=", source)
@@ -53,7 +53,7 @@ class TestSourceBaselinesReal:
 
     def test_source_baselines_keys_match_module_constants(self) -> None:
         """Verify _SOURCE_BASELINES keys match module-level constant names."""
-        from intelligence.confidence_policy import (
+        from hledac.universal.recon.confidence_policy import (
             _SOURCE_BASELINES,
         )
 
@@ -71,7 +71,7 @@ class TestSourceBaselinesReal:
 
     def test_source_baselines_values_match_constants(self) -> None:
         """Verify _SOURCE_BASELINES values match the module-level constants."""
-        from intelligence.confidence_policy import (
+        from hledac.universal.recon.confidence_policy import (
             _SOURCE_BASELINES,
             CT,
             FEED,
@@ -94,7 +94,7 @@ class TestSourceBaselinesReal:
 
     def test_ast_no_baselines_assignment_in_function(self) -> None:
         """AST test: no Assign node with target '_BASELINES' inside compute_confidence."""
-        from intelligence.confidence_policy import compute_confidence
+        from hledac.universal.recon.confidence_policy import compute_confidence
 
         source = inspect.getsource(compute_confidence)
         tree = ast.parse(source)
@@ -199,7 +199,7 @@ class TestClaimsCoordinatorMigration:
     def test_all_outputs_bounded(self) -> None:
         """Behavior test: all confidence outputs in [0.10, 0.95]."""
         from hledac.universal.coordinators.claims_coordinator import ClaimsCoordinator
-        from intelligence.confidence_policy import MAX_CONFIDENCE, MIN_CONFIDENCE
+        from hledac.universal.recon.confidence_policy import MAX_CONFIDENCE, MIN_CONFIDENCE
 
         coord = ClaimsCoordinator()
 
@@ -258,7 +258,7 @@ class TestSocialIdentityMinerMigration:
 
     def test_social_min_confidence_threshold_preserved(self) -> None:
         """Behavior test: SOCIAL_MIN_CONFIDENCE threshold preserved."""
-        from intelligence.social_identity_miner import SOCIAL_MIN_CONFIDENCE, SocialIdentityMiner
+        from hledac.universal.recon.social_identity_miner import SOCIAL_MIN_CONFIDENCE, SocialIdentityMiner
 
         miner = SocialIdentityMiner()
 
@@ -272,7 +272,7 @@ class TestSocialIdentityMinerMigration:
 
     def test_social_facet_with_linked_email_domain_higher_than_bare(self) -> None:
         """Behavior test: social facet with email/domain scores higher than bare profile."""
-        from intelligence.social_identity_miner import SocialIdentityMiner
+        from hledac.universal.recon.social_identity_miner import SocialIdentityMiner
 
         miner = SocialIdentityMiner()
 
@@ -292,8 +292,8 @@ class TestSocialIdentityMinerMigration:
 
     def test_confidence_upper_bound_095(self) -> None:
         """Behavior test: social confidence respects MAX_CONFIDENCE=0.95."""
-        from intelligence.confidence_policy import MAX_CONFIDENCE
-        from intelligence.social_identity_miner import SocialIdentityMiner
+        from hledac.universal.recon.confidence_policy import MAX_CONFIDENCE
+        from hledac.universal.recon.social_identity_miner import SocialIdentityMiner
 
         miner = SocialIdentityMiner()
 
@@ -307,8 +307,8 @@ class TestSocialIdentityMinerMigration:
 
     def test_all_outputs_bounded(self) -> None:
         """Behavior test: all social confidence outputs in [0.10, 0.95]."""
-        from intelligence.confidence_policy import MAX_CONFIDENCE, MIN_CONFIDENCE
-        from intelligence.social_identity_miner import SocialIdentityMiner
+        from hledac.universal.recon.confidence_policy import MAX_CONFIDENCE, MIN_CONFIDENCE
+        from hledac.universal.recon.social_identity_miner import SocialIdentityMiner
 
         miner = SocialIdentityMiner()
 
@@ -324,13 +324,13 @@ class TestSocialIdentityMinerMigration:
 
     def test_no_mlx_in_social_identity_miner(self) -> None:
         """Security test: no MLX imported in social_identity_miner module."""
-        import intelligence.social_identity_miner as mod
+        import hledac.universal.recon.social_identity_miner as mod
 
         assert not hasattr(mod, "mlx")
 
     def test_no_duckdb_import_at_module_level(self) -> None:
         """Security test: no DuckDB imported at social_identity_miner module load."""
-        import intelligence.social_identity_miner as mod
+        import hledac.universal.recon.social_identity_miner as mod
 
         src = inspect.getsource(mod)
         module_level = src.split("def ")[0].split("class ")[0]

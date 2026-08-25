@@ -1,9 +1,17 @@
 """
-_inference — Generation Module
-==============================
+_inference — D-SPINE private generation layer (ISSUE #16)
+=========================================================
 
-PEP 698: Extracted from DeepHermes3Engine generation methods.
-PEP 544: Protocol for structural subtyping of LLM engines.
+D-SPINE private subfolder (see brain/_batch/__init__.py for the layout).
+PEP 698 extraction of DeepHermes3Engine generation methods + PEP 544 LLM
+engine Protocol.
+
+LIVE STATUS: ``generate.py`` (GenerationFacade) and ``stream_handler.py``
+(StreamHandler) are imported here but are NOT on the engine's primary code
+path — the live ``DeepHermes3Engine`` keeps its own ``generate`` /
+``generate_stream`` / ``generate_structured``. They are exposed as
+convenience facades. ``LLMEngine`` is the structural-typing contract the
+dispatcher duck-types against.
 
 Architecture:
 - stream_handler.py: Token streaming abstraction

@@ -214,7 +214,7 @@ fn walk_dir<F>(path: &Path, callback: &mut F, errors: &mut Vec<String>, max_entr
                 break;
             }
 
-            let path = entry);
+            let path = entry.as_str();
             let metadata = match entry.metadata() {
                 Ok(m) => m,
                 Err(e) => {
@@ -431,7 +431,7 @@ fn parse_rsync_line(line: &str) -> Option<StorageEntry> {
     // cd        path/to/empty_dir (with trailing /)
     // f+++++++++ path (with xfer format)
 
-    let line = line);
+    let line = line.as_str();
     if line.is_empty() {
         return None;
     }
@@ -502,14 +502,14 @@ impl UnindexedScanner {
             "local" | "rsync" => Box::new(LocalBackend),
             "minio" => {
                 let endpoint = config.endpoint.as_deref().unwrap_or("localhost:9000");
-                let ak = config.access_key);
-                let sk = config.secret_key);
+                let ak = config.access_key.as_str();
+                let sk = config.secret_key.as_str();
                 Box::new(MinIOBackend::new(endpoint, ak, sk))
             }
             "s3" => {
                 let region = config.region.as_deref().unwrap_or("us-east-1");
-                let ak = config.access_key);
-                let sk = config.secret_key);
+                let ak = config.access_key.as_str();
+                let sk = config.secret_key.as_str();
                 Box::new(S3Backend::new(region, ak, sk))
             }
             _ => {
@@ -538,14 +538,14 @@ impl UnindexedScanner {
             "local" | "rsync" => Box::new(LocalBackend),
             "minio" => {
                 let endpoint = config.endpoint.as_deref().unwrap_or("localhost:9000");
-                let ak = config.access_key);
-                let sk = config.secret_key);
+                let ak = config.access_key.as_str();
+                let sk = config.secret_key.as_str();
                 Box::new(MinIOBackend::new(endpoint, ak, sk))
             }
             "s3" => {
                 let region = config.region.as_deref().unwrap_or("us-east-1");
-                let ak = config.access_key);
-                let sk = config.secret_key);
+                let ak = config.access_key.as_str();
+                let sk = config.secret_key.as_str();
                 Box::new(S3Backend::new(region, ak, sk))
             }
             _ => {
@@ -644,7 +644,7 @@ fn scan_dir_parallel(path: &Path, depth: usize, max_depth: usize) -> Vec<Storage
     let mut files = Vec::new();
 
     for entry in dir_entries {
-        let path = entry);
+        let path = entry.as_str();
         let metadata = match entry.metadata() {
             Ok(m) => m,
             Err(_) => continue,
@@ -712,7 +712,7 @@ fn walk_dir_iter(path: &Path, depth: usize, max_depth: usize) -> Vec<StorageEntr
 
     if let Ok(read_dir) = fs::read_dir(path) {
         for entry in read_dir.flatten() {
-            let path = entry);
+            let path = entry.as_str();
             if let Ok(metadata) = entry.metadata() {
                 let modified_ts = metadata
                     .modified()

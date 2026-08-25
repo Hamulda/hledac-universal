@@ -40,7 +40,7 @@ def reciprocal_rank_fusion(rows: list[dict], k: int = 60) -> list[dict]:
         row["provider_count"] = len(row.pop("_providers"))
         row["score"] = row.pop("_rrf") + 0.02 * row["provider_count"]
         out.append(row)
-    out.sort(key=itemgetter("_rrf"), reverse=True)
+    out.sort(key=itemgetter("score"), reverse=True)
     return out
 
 

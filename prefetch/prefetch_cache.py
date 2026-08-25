@@ -142,20 +142,34 @@ class PrefetchCache:
     async def _writer_loop(self) -> None:
         """Background writer – sekvenční zpracování požadavků."""
         while True:
+            batch: list[tuple[str, str, Any]] = []
+            stop = False
             try:
                 op, url, entry = await self._write_queue.get()
-                if op == "__stop__":
-                    self._write_queue.task_done()
-                    break
+                batch.append((op, url, entry))
+                # Drain up to 63 more ops without blocking, then write them
+                # all in ONE LMDB transaction (invariant #6: never per-item
+                # env.begin(write=True)). Bounded to 64 ops per txn.
+                for _ in range(63):
+                    try:
+                        batch.append(self._write_queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
                 with self.env.begin(write=True) as txn:
-                    if op == "put" or op == "update":
-                        txn.put(url.encode(), orjson.dumps(entry))
-                    elif op == "delete":
-                        txn.delete(url.encode())
-                self._write_queue.task_done()
-            except Exception as e:
+                    for bop, burl, bentry in batch:
+                        if bop in ("put", "update"):
+                            txn.put(burl.encode(), orjson.dumps(bentry))
+                        elif bop == "delete":
+                            txn.delete(burl.encode())
+                stop = op == "__stop__" or any(b[0] == "__stop__" for b in batch)
+            except Exception as e:  # noqa: BLE001 — writer must never die
                 logger.error(f"Cache writer error: {e}")
-                self._write_queue.task_done()
+            finally:
+                for _ in batch:
+                    self._write_queue.task_done()
+            if stop:
+                break
+        # Final drain for any ops that arrived after the stop sentinel.
         while True:
             try:
                 op, url, entry = self._write_queue.get_nowait()
@@ -167,6 +181,6 @@ class PrefetchCache:
                 self._write_queue.task_done()
             except asyncio.QueueEmpty:
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error(f"Final drain error: {e}")
                 self._write_queue.task_done()

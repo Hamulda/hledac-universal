@@ -15,8 +15,6 @@ from enum import StrEnum
 from pathlib import Path
 from compat.msgspec_gc_compat import Struct
 
-if TYPE_CHECKING:
-
 class RootCause(StrEnum):
     MEMORY_BLOCKED = 'MEMORY_BLOCKED'
     FEED_DOMINATED = 'FEED_DOMINATED'

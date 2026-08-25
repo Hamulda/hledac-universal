@@ -318,7 +318,7 @@ class EntropyFeedbackService:
             return
 
         self._running.set()  # ISSUE-OPT-1: Set running state
-        self._consumer_task = asyncio.create_task(self._consumer_loop())
+        self._consumer_task = safe_create_task(self._consumer_loop())
         logger.info("Entropy feedback consumer started")
 
     async def stop_consumer(self) -> None:

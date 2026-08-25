@@ -166,7 +166,7 @@ impl LRUCache {
             return;
         };
         let compressed = lz4_compress(&serialized);
-        let entry_bytes = compressed);
+        let entry_bytes = compressed.clone();
 
         // Evict LRU entries if at capacity
         while self.entries.len() >= MAX_CACHE_ENTRIES
@@ -295,7 +295,7 @@ impl LRUCache {
             }
 
             // Read compressed_value
-            let compressed_value = mmap[offset..offset + value_len]);
+            let compressed_value = mmap[offset..offset + value_len].clone();
             offset += value_len;
 
             // Read counter (unused for now, but we still need to skip it)
@@ -369,7 +369,7 @@ impl LRUCache {
 
                 // [key_value_len:u32][key_value][max_hops:u32][value_len:u32][compressed][counter:u64]
                 let mut entry = Vec::with_capacity(entry_len);
-                let key_bytes = key.root_value);
+                let key_bytes = key.root_value.clone();
                 entry.extend_from_slice(&(key_bytes.len() as u32).to_le_bytes());
                 entry.extend_from_slice(key_bytes);
                 entry.extend_from_slice(&(key.max_hops as u32).to_le_bytes());

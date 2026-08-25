@@ -48,8 +48,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 
-if TYPE_CHECKING:
-
 # Availability flag — set once at module load
 _ANALYSIS_RUST_AVAILABLE = False
 
@@ -78,7 +76,7 @@ class _RustAntiAnalysisDomain:
         self,
         url: str,
         timeout_ms: int | None = None,
-    ) -> "QuickProbeResult":
+    ) -> QuickProbeResult:
         """
         Fast combined check for hot path (≤50ms budget).
 
@@ -100,7 +98,7 @@ class _RustAntiAnalysisDomain:
         port: int = 443,
         timeout_ms: int | None = None,
         sni: str | None = None,
-    ) -> "TlsChallengeResult":
+    ) -> TlsChallengeResult:
         """
         Detect TLS fingerprint challenges (Cloudflare Turnstile, DataDome, Akamai).
 
@@ -125,7 +123,7 @@ class _RustAntiAnalysisDomain:
         host: str,
         port: int = 443,
         timeout_ms: int | None = None,
-    ) -> "H2SettingsResult":
+    ) -> H2SettingsResult:
         """
         Detect HTTP/2 SETTINGS anomalies (Safari WebKit mismatch detection).
 
@@ -149,7 +147,7 @@ class _RustAntiAnalysisDomain:
         url: str,
         timeout_ms: int | None = None,
         profile: str | None = None,
-    ) -> "HoneypotProbeResult":
+    ) -> HoneypotProbeResult:
         """
         Early honeypot micro-probe (3-request).
 
@@ -178,7 +176,7 @@ class _RustAntiAnalysisDomain:
         """
         self._ext.mark_host_abandoned(domain, reason)
 
-    def is_host_abandoned(self, domain: str) -> "AbandonCheckResult":
+    def is_host_abandoned(self, domain: str) -> AbandonCheckResult:
         """
         Check if domain is abandoned.
 
@@ -230,7 +228,7 @@ class _PythonAntiAnalysisDomain:
         self,
         url: str,
         timeout_ms: int | None = None,
-    ) -> "QuickProbeResult":
+    ) -> QuickProbeResult:
         """Safe fallback: never abandons domains."""
         return QuickProbeResult(
             abandoned=False,
@@ -246,7 +244,7 @@ class _PythonAntiAnalysisDomain:
         port: int = 443,
         timeout_ms: int | None = None,
         sni: str | None = None,
-    ) -> "TlsChallengeResult":
+    ) -> TlsChallengeResult:
         """Safe fallback: no challenge detected."""
         return TlsChallengeResult(
             challenge_detected=False,
@@ -262,7 +260,7 @@ class _PythonAntiAnalysisDomain:
         host: str,
         port: int = 443,
         timeout_ms: int | None = None,
-    ) -> "H2SettingsResult":
+    ) -> H2SettingsResult:
         """Safe fallback: no anomaly detected."""
         return H2SettingsResult(
             anomaly_detected=False,
@@ -278,7 +276,7 @@ class _PythonAntiAnalysisDomain:
         url: str,
         timeout_ms: int | None = None,
         profile: str | None = None,
-    ) -> "HoneypotProbeResult":
+    ) -> HoneypotProbeResult:
         """Safe fallback: no honeypot detected."""
         return HoneypotProbeResult(
             honeypot_detected=False,
@@ -295,7 +293,7 @@ class _PythonAntiAnalysisDomain:
     def mark_host_abandoned(self, domain: str, reason: str) -> None:
         """No-op in Python fallback."""
 
-    def is_host_abandoned(self, domain: str) -> "AbandonCheckResult":
+    def is_host_abandoned(self, domain: str) -> AbandonCheckResult:
         """Safe fallback: domain not abandoned."""
         return AbandonCheckResult(
             abandoned=False,
@@ -470,7 +468,7 @@ class AbandonCheckResult:
 
 
 
-def _get_domain() -> "_RustAntiAnalysisDomain | _PythonAntiAnalysisDomain":
+def _get_domain() -> _RustAntiAnalysisDomain | _PythonAntiAnalysisDomain:
     """Get the appropriate anti_analysis domain based on Rust availability."""
     if _ANALYSIS_RUST_AVAILABLE and _aa_rust is not None:
         return _RustAntiAnalysisDomain(_aa_rust)
@@ -478,7 +476,7 @@ def _get_domain() -> "_RustAntiAnalysisDomain | _PythonAntiAnalysisDomain":
 
 
 # Module-level singleton (lazy initialization via property)
-_domain: "_RustAntiAnalysisDomain | _PythonAntiAnalysisDomain | None" = None
+_domain: _RustAntiAnalysisDomain | _PythonAntiAnalysisDomain | None = None
 
 
 def __getattr__(name: str) -> Any:

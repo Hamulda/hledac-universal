@@ -581,7 +581,7 @@ def canned_ct_adapter():
     """
     Patch CTLogClient.pivot_domain to return canned CT findings.
     """
-    from hledac.universal.intel.ct_log_client import CTLogClient
+    from hledac.universal.recon.ct_log_client import CTLogClient
 
     ct_result = _make_canned_ct_result()
 
@@ -626,7 +626,7 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
     Hermetic: no real HTTP, no Tor, no real CT backend, no external services.
     """
     from hledac.universal.export.sprint_exporter import export_sprint
-    from hledac.universal.intel.ct_log_client import CTLogClient
+    from hledac.universal.recon.ct_log_client import CTLogClient
     from hledac.universal.paths import get_sprint_json_report_path
     from hledac.universal.project_types import ExportHandoff
     from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
@@ -827,7 +827,7 @@ async def test_aggressive_cycle_fans_out_feed_public_ct_concurrently(
     Verifies that when aggressive_mode=True, CT discovery runs within the
     cycle (not just post-loop), and all three branches are launched.
     """
-    from hledac.universal.intel.ct_log_client import CTLogClient
+    from hledac.universal.recon.ct_log_client import CTLogClient
     from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
         SprintScheduler,
@@ -894,7 +894,7 @@ async def test_slow_branch_timeout_does_not_block_other_branches(
     we're testing, not the actual wait duration.
     """
     import hledac.universal.pipeline.live_public_pipeline as pub_module
-    from hledac.universal.intel.ct_log_client import CTLogClient
+    from hledac.universal.recon.ct_log_client import CTLogClient
     from hledac.universal.pipeline.live_public_pipeline import PipelineRunResult
     from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
@@ -982,7 +982,7 @@ async def test_partial_branch_success_still_updates_runtime_truth(
     should still be persisted and count toward runtime truth.
     """
     import hledac.universal.pipeline.live_public_pipeline as pub_module
-    from hledac.universal.intel.ct_log_client import CTLogClient
+    from hledac.universal.recon.ct_log_client import CTLogClient
     from hledac.universal.pipeline.live_public_pipeline import PipelineRunResult
     from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (

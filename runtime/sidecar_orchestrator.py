@@ -1267,11 +1267,11 @@ class SidecarOrchestrator:
         try:
             import psutil
 
-            process = psutil.Process()
-            mem_info = process.memory_info()
-            rss_mb = mem_info.rss / 1024**2
-            vm = psutil.virtual_memory()
-            high_water = vm.percent * 0.85
+            from hledac.universal._core.psutil_shim import process as _proc
+            from hledac.universal.utils.sys_metrics import system_memory_sync
+            proc = _proc()
+            rss_mb = proc.memory_info().rss / 1024**2 if proc is not None else 0.0
+            high_water = system_memory_sync().percent * 0.85
             return rss_mb <= high_water
         except Exception:  # noqa: BLE001
             return True
@@ -1503,7 +1503,7 @@ class SidecarOrchestrator:
         all_target_ids = set(entity_facets.keys()) | set(exposure_facets.keys()) | set(pivot_facets.keys())
 
         try:
-            from hledac.universal.intel.target_memory_service import (
+            from hledac.universal.knowledge.target_memory import (
                 TargetMemoryService,
                 TargetMemoryUpdate,
             )
@@ -1554,7 +1554,7 @@ class SidecarOrchestrator:
                     # No running event loop - schedule via call_soon_threadsafe
                     # This is safe for sync contexts (e.g., sprint teardown)
                     def _unregister() -> None:
-                        asyncio.create_task(registry.unregister_subscription("sidecars"))
+                        safe_create_task(registry.unregister_subscription("sidecars"))
 
                     try:
                         loop = asyncio.new_event_loop()
@@ -1599,7 +1599,7 @@ class SidecarOrchestrator:
     async def _run_bgp_advisory_sidecar(self) -> None:
         """F234: BGP advisory sidecar for ASN/path analysis. Fail-soft."""
         try:
-            from hledac.universal.intel.bgp_advisor_adapter import (
+            from hledac.universal.recon.bgp_advisor_adapter import (
                 create_bgp_advisor_adapter,
             )
 
@@ -1611,7 +1611,7 @@ class SidecarOrchestrator:
     async def _run_wayback_cdx_deep_sidecar(self) -> None:
         """F234: Deep Wayback CDX analysis for URL history. Fail-soft."""
         try:
-            from hledac.universal.intel.wayback_cdx_deep_adapter import (
+            from hledac.universal.recon.wayback_cdx_deep_adapter import (
                 create_wayback_cdx_deep_adapter,
             )
 

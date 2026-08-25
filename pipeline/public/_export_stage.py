@@ -202,20 +202,21 @@ def _build_graph_from_findings(findings: list[dict[str, Any]]) -> Any | None:
 
     [META]-012: Extracts timestamp from finding dict for observed_at.
     """
-    try:
-        from hledac.universal.knowledge.graph_service import DuckPGQGraph
+    # ISSUE #4: Route through graph_service.upsert_ioc dispatcher
+    from hledac.universal.knowledge.graph_service import upsert_ioc as _graph_upsert_ioc
 
-        graph = DuckPGQGraph()
+    try:
         for f in findings:
             # [META]-012: Extract observed_at from finding timestamp
             observed_at = f.get("ts") or f.get("timestamp") or None
-            graph.upsert_ioc(
-                ioc_value=f.get("url", ""),
+            _graph_upsert_ioc(
+                value=f.get("url", ""),
                 ioc_type="url",
                 confidence=f.get("confidence", 0.5),
                 source=f.get("source_type", "public"),
                 observed_at=observed_at,
             )
-        return graph
+        # Return None since graph is managed by dispatcher (export just triggers inserts)
+        return None
     except Exception:
         return None

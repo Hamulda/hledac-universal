@@ -65,18 +65,13 @@ from hledac.universal.runtime.source_finding_config import (
     is_private_hostname,
     is_private_ip_prefix,
 )
+from hledac.universal.utils.optional_imports import lazy_import
 
 logger = logging.getLogger(__name__)
 
-try:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-except ImportError:
-    CanonicalFinding = None  # type: ignore[assignment]
+CanonicalFinding = lazy_import("hledac.universal.knowledge.duckdb_store:CanonicalFinding", default=None)
 
-try:
-    from hledac.universal.utils.source_types import SourceType
-except ImportError:
-    SourceType = None  # type: ignore[assignment]
+SourceType = lazy_import("hledac.universal.utils.source_types:SourceType", default=None)
 
 __all__ = [
     "ct_results_to_findings",

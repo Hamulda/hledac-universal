@@ -29,6 +29,7 @@ from .boot import _run_sprint_boot
 from .execute import _run_sprint_execute
 from .teardown import _run_sprint_teardown
 from .windup import _run_sprint_windup
+from hledac.universal.utils.optional_imports import lazy_import
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +41,7 @@ try:
 except Exception:
     pass
 
-try:
-    from otel import instrumented as _otel_instrumented
-except ImportError:
-    from hledac.universal.otel import instrumented as _otel_instrumented
+_otel_instrumented = lazy_import("otel:instrumented", default=lazy_import("hledac.universal.otel:instrumented"))
 
 
 @_otel_instrumented("sprint.run", component="cli")

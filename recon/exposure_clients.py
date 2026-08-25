@@ -30,17 +30,16 @@ from typing import Any
 
 import httpx
 
-try:
-    import orjson as _json
-except ImportError:
-    import json as _json
+_json = lazy_import("orjson", default=lazy_import("json"))
 
 # S-01: Use UnifiedLMDB via get_unified_lmdb + SubDB
+from hledac.universal._core.env_config import ENV
 from hledac.universal._core.lmdb_unified import SubDB, get_unified_lmdb
 from hledac.universal.recon._http_helpers import get_intelligence_session
 from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.domain_executors import get_exposure_db_executor
 from hledac.universal.utils.msgspec_json import decode, encode
+from hledac.universal.utils.optional_imports import lazy_import
 
 logger = logging.getLogger(__name__)
 
@@ -162,13 +161,13 @@ class ShodanClient:
     Cache key: shodan:{ip}
     TTL: 7 dní
 
-    Bez SHODAN_API_KEY: LMDB-only mode, žádné HTTP volání.
+    Bez HLEDAC_SHODAN_API_KEY (alias SHODAN_API_KEY): LMDB-only mode, žádné HTTP volání.
     """
 
     __slots__ = ("_api_key", "_cache", "_injected_session")
 
     def __init__(self, session: httpx.AsyncClient | None = None) -> None:
-        self._api_key = os.environ.get("SHODAN_API_KEY", "")
+        self._api_key = ENV.get_api_key("HLEDAC_SHODAN_API_KEY")
         self._cache = ExposureCache(prefix="shodan")
         self._injected_session: httpx.AsyncClient | None = session
 
@@ -183,7 +182,7 @@ class ShodanClient:
 
         1. LMDB lookup (b"shodan:" + ip)
         2. Cache hit → return cached data
-        3. Cache miss + SHODAN_API_KEY → HTTP GET api.shodan.io
+        3. Cache miss + HLEDAC_SHODAN_API_KEY → HTTP GET api.shodan.io
         4. Cache miss + no key → log INFO + return None
 
         Returns:
@@ -233,14 +232,14 @@ class CensysClient:
     Cache key: censys:{query_hash}
     TTL: 7 dní
 
-    Bez CENSYS_API_ID/CENSYS_API_SECRET: LMDB-only mode.
+    Bez HLEDAC_CENSYS_API_ID/HLEDAC_CENSYS_API_SECRET: LMDB-only mode.
     """
 
     __slots__ = ("_api_id", "_api_secret", "_cache", "_injected_session")
 
     def __init__(self, session: httpx.AsyncClient | None = None) -> None:
-        self._api_id = os.environ.get("CENSYS_API_ID", "")
-        self._api_secret = os.environ.get("CENSYS_API_SECRET", "")
+        self._api_id = ENV.get_api_key("HLEDAC_CENSYS_API_ID")
+        self._api_secret = ENV.get_api_key("HLEDAC_CENSYS_API_SECRET")
         self._cache = ExposureCache(prefix="censys")
         self._injected_session: httpx.AsyncClient | None = session
 

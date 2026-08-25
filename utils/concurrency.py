@@ -75,11 +75,7 @@ class AtomicAdaptiveSemaphore:
         """Release one permit, waking a waiter if any are blocked."""
         async with self._cond:
             self._value += 1
-            if self._waiters:
-                fut = self._waiters.popleft()
-                if not fut.done():
-                    self._value -= 1
-                    fut.set_result(None)
+            self._cond.notify(1)
 
     async def resize(self, new_max: int) -> None:
         """
@@ -101,14 +97,14 @@ class AtomicAdaptiveSemaphore:
             self._max = new_max
             if delta > 0:
                 self._value += delta
-                notified = 0
-                while self._waiters and notified < delta:
-                    fut = self._waiters.popleft()
-                    if not fut.done():
-                        self._value -= 1
-                        fut.set_result(None)
-                        notified += 1
-                self._cond.notify(min(notified, len(self._waiters)))
+                self._cond.notify(delta)
+
+    async def __aenter__(self) -> AtomicAdaptiveSemaphore:
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.release()
 
     @property
     def available(self) -> int:
@@ -409,3 +405,29 @@ class AdaptiveWorkerPool:
             Adjusted job count bounded by get_max_workers()
         """
         return min(requested, self.get_max_workers())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared daemon background event loop.
+# Used to schedule coroutines from threads that have NO running loop (e.g. Rust
+# callbacks / worker threads) WITHOUT spinning a fresh loop via asyncio.run()
+# — which is forbidden by AGENTS.md invariant #4 (asyncio.run() inside a
+# ThreadPoolExecutor is an M1 crash vector).
+# ─────────────────────────────────────────────────────────────────────────────
+import threading
+
+_bg_loop: asyncio.AbstractEventLoop | None = None
+_bg_loop_lock = threading.Lock()
+
+
+def _get_bg_loop() -> asyncio.AbstractEventLoop:
+    """Return the shared daemon background event loop, creating it on first use."""
+    global _bg_loop
+    if _bg_loop is None or _bg_loop.is_closed():
+        with _bg_loop_lock:
+            if _bg_loop is None or _bg_loop.is_closed():
+                loop = asyncio.new_event_loop()
+                threading.Thread(target=loop.run_forever, daemon=True, name="hledac-bg-loop").start()
+                _bg_loop = loop
+    assert _bg_loop is not None
+    return _bg_loop

@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn test_queue_pair_create() {
         let pair = SPSCQueuePair::new();
-        let sender = pair);
+        let sender = pair.clone();
         assert!(sender.has_space());
         assert!(!sender.is_disconnected());
     }
@@ -331,8 +331,8 @@ mod tests {
     #[test]
     fn test_queue_send_recv() {
         let mut pair = SPSCQueuePair::new();
-        let sender = pair);
-        let ptr = pair);
+        let sender = pair.clone();
+        let ptr = pair.clone();
         assert!(ptr != 0);
 
         // Safety: reclaim immediately
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn test_queue_full_backpressure() {
         let _pair = SPSCQueuePair::new();
-        let sender = _pair);
+        let sender = _pair.clone();
 
         // Fill the queue
         for _ in 0..SPSC_QUEUE_DEPTH {
@@ -363,8 +363,8 @@ mod tests {
     #[test]
     fn test_multiple_senders() {
         let pair = SPSCQueuePair::new();
-        let sender1 = pair);
-        let sender2 = pair);
+        let sender1 = pair.clone();
+        let sender2 = pair.clone();
 
         assert!(sender1.send(b"from-sender1"));
         assert!(sender2.send(b"from-sender2"));
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn test_take_receiver_once() {
         let mut pair = SPSCQueuePair::new();
-        let ptr = pair);
+        let ptr = pair.clone();
         assert!(ptr != 0);
 
         // Safety: we immediately reclaim the pointer to avoid leaking
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn test_is_disconnected_after_drop() {
         let pair = SPSCQueuePair::new();
-        let sender = pair);
+        let sender = pair.clone();
 
         // Sender should be connected initially
         assert!(!sender.is_disconnected());

@@ -55,8 +55,6 @@ import warnings
 
 from typing import TYPE_CHECKING, Literal
 
-if TYPE_CHECKING:
-
 __all__ = ["render", "t", "Template"]
 
 warnings.warn(

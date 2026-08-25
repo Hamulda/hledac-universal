@@ -130,7 +130,7 @@ class _DuckDBQueryCache:
                 return None
 
             entry = _orjson_mod.loads(raw)
-            if time.monotonic() - entry["ts"] > object.__getattribute__(self, "_ttl_s"):
+            if time.time() - entry["ts"] > object.__getattribute__(self, "_ttl_s"):
                 return None
             return entry["rows"]
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
@@ -145,7 +145,7 @@ class _DuckDBQueryCache:
         try:
             import orjson as _orjson_mod
 
-            entry_bytes = _orjson_mod.dumps({"rows": rows, "ts": time.monotonic()})
+            entry_bytes = _orjson_mod.dumps({"rows": rows, "ts": time.time()})
             with env.begin(write=True) as txn:
                 if txn.stat()["entries"] >= object.__getattribute__(self, "_max_l2"):
                     # Evict the oldest entry (first in insertion order) before putting.

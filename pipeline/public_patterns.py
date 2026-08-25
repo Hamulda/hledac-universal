@@ -1,20 +1,24 @@
 """Public pattern matching and quality scoring.
 
 Extracted from live_public_pipeline.py.
-Handles: IOC extraction (rust backend), pattern context, quality scoring,
-
-         page usability computation, and HTML→text conversion.
+Handles: IOC extraction (rust backend + brain NER dual engine M-2026),
+         pattern context, quality scoring, page usability computation, and
+         HTML→text conversion.
 
 Pure functions, no I/O, no async. Heavy I/O (rust backend) is fail-safe.
 """
 
+import asyncio
 import hashlib
 import html.parser
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 _QUALITY_TIER_VERY_GOOD = "very_good"
 _QUALITY_TIER_GOOD = "good"
@@ -564,6 +568,83 @@ def extract_iocs_from_text(text: str) -> list[Any]:
     return []
 
 
+async def extract_iocs_dual_engine(
+    text: str,
+    *,
+    use_ner: bool = True,
+) -> list[Any]:
+    """M-2026-FIX: dual-engine IOC extraction (Rust regex + Brain NER).
+
+    AGENTS.md invariant: "live_public_pipeline.py calls both — to je správně."
+    Previously the brain NER engine (``brain.ner_engine.extract_iocs_from_text``)
+    was never invoked from the live public pipeline. Only the Rust regex path ran.
+    This function wires both engines in parallel via ``asyncio.gather(..., return_exceptions=True)``
+    and returns a deduplicated union of all findings.
+
+    Engines:
+        * Rust regex (``extract_iocs_from_text``) — fast, deterministic,
+          handles obfuscation via ADVERSARY-003 deobfuscation hook.
+        * Brain NER (lazy-loaded ``brain.ner_engine``) — GLiNER ML model that
+          catches contextual IOCs the regex misses (free-text mentions in
+          darknet / forum posts / pastebin dumps).
+
+    Performance:
+        * NER runs on ANE/MPS concurrently with Rust SIMD scan.
+        * NER is skipped when ``use_ner=False`` (e.g., low-battery / cpu_only runs).
+        * Fail-safe: any engine exception is captured and the other engine's
+          results are still returned (via return_exceptions=True).
+    """
+    results: list[Any] = []
+
+    # 1) Rust regex (always runs, synchronous SIMD under the hood).
+    rust_coro = asyncio.to_thread(extract_iocs_from_text, text)
+
+    # 2) Brain NER (lazy import, only if requested).
+    ner_coro: asyncio.Future | None = None
+    if use_ner:
+        async def _ner_runner() -> list[Any]:
+            try:
+                from hledac.universal.brain.ner_engine import extract_iocs_from_text as ner_extract
+            except ImportError:
+                return []
+            try:
+                # NER runs synchronously; offload to thread to avoid blocking
+                # the live pipeline when a large text is analyzed.
+                return await asyncio.to_thread(ner_extract, text)
+            except Exception:  # noqa: BLE001
+                return []
+        ner_coro = _ner_runner()
+
+    # Run both in parallel with proper exception isolation (AGENTS.md invariant #1).
+    tasks = [rust_coro]
+    if ner_coro is not None:
+        tasks.append(ner_coro)
+
+    outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 3) Deduplicate merged results.
+    seen: set[tuple[str, str]] = set()
+    for outcome in outcomes:
+        if isinstance(outcome, BaseException):
+            logger.debug(f"[dual-engine] engine failed: {outcome!r}")
+            continue
+        if not outcome:
+            continue
+        for ioc in outcome:
+            # Normalize to (value, type) tuple for dedup.
+            if isinstance(ioc, (list, tuple)) and len(ioc) >= 2:
+                key = (str(ioc[0]), str(ioc[1]))
+            elif isinstance(ioc, dict):
+                key = (str(ioc.get("value", ioc.get("ioc", ""))), str(ioc.get("type", ioc.get("ioc_type", ""))))
+            else:
+                key = (str(ioc), "")
+            if key[0] and key not in seen:
+                seen.add(key)
+                results.append(ioc)
+
+    return results
+
+
 def _is_batch_large_enough(texts: list[str]) -> bool:
     """Check if batch is large enough to warrant Rust batch processing.
 
@@ -734,6 +815,122 @@ def extract_iocs_from_texts(
         return result
     else:
         return [extract_iocs_from_text(t) for t in texts]
+
+
+async def extract_iocs_from_texts_dual(
+    texts: list[str],
+    *,
+    use_ner: bool = True,
+) -> list[list[CanonicalIOC]]:
+    """Batch dual-engine IOC extraction for multiple texts.
+
+    Runs the Rust batch (rayon SIMD, one GIL acquisition) and the Brain NER
+    engine concurrently, then merges + deduplicates per text into a
+    ``list[list[CanonicalIOC]]`` aligned 1:1 with ``texts``.
+
+    Parallelism: both engines are dispatched together via
+    ``asyncio.gather(rust_task, ner_task, return_exceptions=True)`` so the NER
+    work overlaps the Rust SIMD scan (M1 8GB friendly — no extra threads spin
+    up unless NER is actually available).
+
+    Gate: NER is skipped when ``use_ner=False`` or
+    ``brain.ner_engine._is_ner_available()`` is False.
+
+    Fail-safe: returns ``[[] * len(texts)]`` on empty input or catastrophic error.
+    """
+    from hledac.universal.hledac_types.canonical import (
+        BRAIN_NER_SOURCE,
+        CanonicalIOC,
+        RUST_REGEX_SOURCE,
+        dedup_canonical_iocs,
+        make_canonical_ioc,
+    )
+
+    if not texts:
+        return []
+
+    # Rust batch path (single thread, rayon-parallel internally).
+    rust_task = asyncio.to_thread(extract_iocs_from_texts, texts)
+
+    # NER path — gated, per-text to preserve page alignment.
+    ner_task: asyncio.Future | None = None
+    if use_ner:
+        async def _ner_batch() -> list[list[CanonicalIOC]]:
+            try:
+                from hledac.universal.brain.ner_engine import (
+                    _is_ner_available,
+                    extract_iocs_from_text as ner_extract,
+                )
+            except ImportError:
+                return [[] for _ in texts]
+            if not _is_ner_available():
+                return [[] for _ in texts]
+            try:
+                per_text = await asyncio.gather(
+                    *[asyncio.to_thread(ner_extract, t) for t in texts],
+                    return_exceptions=True,
+                )
+            except Exception:  # noqa: BLE001
+                return [[] for _ in texts]
+            out: list[list[CanonicalIOC]] = []
+            for raw in per_text:
+                page: list[CanonicalIOC] = []
+                if isinstance(raw, BaseException):
+                    out.append(page)
+                    continue
+                for item in raw or []:
+                    if isinstance(item, dict):
+                        ioc = make_canonical_ioc(
+                            item.get("value", ""),
+                            item.get("ioc_type", item.get("type", "")),
+                            confidence=item.get("confidence"),
+                            source=BRAIN_NER_SOURCE,
+                        )
+                        if ioc is not None:
+                            page.append(ioc)
+                out.append(page)
+            return out
+        ner_task = _ner_batch()
+
+    gathered = await asyncio.gather(
+        rust_task, *(ner_task,) if ner_task is not None else (),
+        return_exceptions=True,
+    )
+
+    rust_results: list[list[Any]] = []
+    if isinstance(gathered[0], BaseException):
+        logger.debug(f"[dual-engine] rust batch failed: {gathered[0]!r}")
+        rust_results = [[] for _ in texts]
+    else:
+        rust_results = gathered[0]
+
+    ner_results: list[list[CanonicalIOC]] = [[] for _ in texts]
+    if ner_task is not None and len(gathered) > 1 and not isinstance(gathered[1], BaseException):
+        ner_results = gathered[1]
+
+    merged: list[list[CanonicalIOC]] = []
+    for i in range(len(texts)):
+        page: list[CanonicalIOC] = []
+        rust_page = rust_results[i] if i < len(rust_results) else []
+        for item in rust_page:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                ioc = make_canonical_ioc(str(item[0]), str(item[1]), source=RUST_REGEX_SOURCE)
+                if ioc is not None:
+                    page.append(ioc)
+            elif isinstance(item, dict):
+                ioc = make_canonical_ioc(
+                    item.get("value", ""),
+                    item.get("ioc_type", item.get("type", "")),
+                    confidence=item.get("confidence"),
+                    source=RUST_REGEX_SOURCE,
+                )
+                if ioc is not None:
+                    page.append(ioc)
+        ner_page = ner_results[i] if i < len(ner_results) else []
+        page.extend(ner_page)
+        merged.append(dedup_canonical_iocs(page))
+
+    return merged
 
 
 # Bounded compiled patterns — max 500 entries in dictionary, O(1) lookup

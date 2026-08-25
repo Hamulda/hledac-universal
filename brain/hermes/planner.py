@@ -20,6 +20,7 @@ import time
 from typing import TYPE_CHECKING
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     pass
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 BRIDGE_CHUNK_SIZE = 4
 
 
-class PlannerRuntimeResult(msgspec.Struct, frozen=True, kw_only=True):
+class PlannerRuntimeResult(Struct, frozen=True, kw_only=True):
     """Result of a planner runtime execution."""
 
     task_id: str
@@ -41,7 +42,7 @@ class PlannerRuntimeResult(msgspec.Struct, frozen=True, kw_only=True):
     elapsed_s: float = 0.0
 
 
-class GenericResult(msgspec.Struct, kw_only=True):
+class GenericResult(Struct, kw_only=True):
     """Generic structured result for planner requests."""
 
     result: str = ""

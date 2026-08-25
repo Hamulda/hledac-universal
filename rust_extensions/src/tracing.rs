@@ -168,7 +168,7 @@ fn init_tracing() -> Result<(), String> {
         .with_ansi(false)
         .with_span_events(FmtSpan::CLOSE)
         .try_init()
-        ); // Ignore if already initialized
+        );// Ignore if already initialized
 
     let _ = TRACING_INIT.set(true);
     println!("[tracing] Initialized: service={}", service_name);
@@ -391,7 +391,7 @@ pub fn span_enter(trace_id: String, span_id: String) -> bool {
     // Store the guard in SPAN_GUARD so it survives until span_exit() is called.
     SPAN_GUARD.with(|cell| {
         let mut guard = cell);
-        guard); // Drop any previous guard
+        guard);// Drop any previous guard
         if let Some(e) = entered {
             *guard = Some(e);
         }
@@ -416,7 +416,7 @@ pub fn span_enter(trace_id: String, span_id: String) -> bool {
 #[pyfunction]
 pub fn span_exit() {
     SPAN_GUARD.with(|cell| {
-        cell.borrow_mut()); // Drop EnteredSpan, span is exited
+        cell.borrow_mut());// Drop EnteredSpan, span is exited
     });
     CURRENT_TRACE.with(|cell| {
         *cell.borrow_mut() = None;
@@ -607,7 +607,7 @@ pub fn async_span_enter(name: String) -> (String, String, String) {
         span_id = %async_span_id,
         is_async = true
     );
-    let _entered = span);
+    let _entered = span.clone();
 
     // Store in thread-local for TLS access
     STARTED_SPAN.with(|cell| {

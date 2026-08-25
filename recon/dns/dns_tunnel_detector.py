@@ -585,11 +585,17 @@ class DNSTunnelDetector:
         if not self._initialized:
             await self.initialize()
         findings = []
+        from hledac.universal.utils.asyncx import bounded_parallel_map
+
         for i in range(0, len(queries), self.config.max_queries_per_batch):
             batch = queries[i : i + self.config.max_queries_per_batch]
-            for query in batch:
-                finding = await self._analyze_single_query(query)
-                findings.append(finding)
+            batch_findings = await bounded_parallel_map(
+                self._analyze_single_query,
+                batch,
+                max_concurrency=64,
+                label=f"dns_tunnel:{i}",
+            )
+            findings.extend(batch_findings)
             await asyncio.sleep(0)
         return findings
 

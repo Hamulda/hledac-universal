@@ -32,8 +32,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 from rust_extensions.integrations import get_circuit_breaker
@@ -96,7 +94,7 @@ class CircuitBreakerContext:
         self._allowed = True
         self._reason = ""
 
-    def __enter__(self) -> "CircuitBreakerContext":
+    def __enter__(self) -> CircuitBreakerContext:
         self._allowed, self._reason = should_allow_request(self._domain)
         return self
 

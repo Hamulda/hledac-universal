@@ -13,16 +13,14 @@ import re
 from io import BytesIO
 
 from hledac.universal.utils.domain_executors import get_captcha_executor
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
+Image = lazy_import("PIL.Image", default=None)
 
 
 def _analyze_pil_sync(image_bytes: bytes) -> float:
     """Analyze PIL image properties — runs in executor thread."""
-    if Image is None:
+    if not Image:
         return 0.0
     try:
         img = Image.open(BytesIO(image_bytes))

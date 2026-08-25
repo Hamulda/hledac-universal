@@ -62,13 +62,11 @@ async def initialize_parallel(engine) -> None:
     """
     logger.info("[INIT] Starting parallel initialization")
 
-    await asyncio.gather(
-        engine._init_kv_cache(),
-        engine._init_outlines(),
-        engine._init_system_prompt_cache(),
-        engine._ensure_batch_worker(),
-        return_exceptions=True,
-    )
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(engine._init_kv_cache())
+        tg.create_task(engine._init_outlines())
+        tg.create_task(engine._init_system_prompt_cache())
+        tg.create_task(engine._ensure_batch_worker())
 
     await engine._prefill_warmup_caches()
 

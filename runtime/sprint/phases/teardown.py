@@ -24,8 +24,6 @@ from typing import TYPE_CHECKING, Any
 from ..types import SprintRunContext
 from ..cleanup import _fail_safe_async
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 

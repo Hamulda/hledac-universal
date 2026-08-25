@@ -45,8 +45,6 @@ from typing import TYPE_CHECKING
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 def is_enabled() -> bool:

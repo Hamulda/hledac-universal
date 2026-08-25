@@ -41,11 +41,9 @@ from knowledge.graph.context_graph import (
     traverse_duckdb_flat,
     traverse_duckdb_single,
 )
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    from rust_extensions.wiring.graph_analytics_wiring import analyze_ioc_graph
-except ImportError:
-    analyze_ioc_graph = None
+analyze_ioc_graph = lazy_import("rust_extensions.wiring.graph_analytics_wiring:analyze_ioc_graph", default=None)
 
 # B3: Import query cache
 try:

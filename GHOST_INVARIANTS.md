@@ -180,11 +180,24 @@ that Google does not crawl. All integration follows these invariants:
 
 #### Capability Gating
 - All three lanes gated by env vars + API key presence:
-  - `HLEDAC_ENABLE_SHODAN` + `SHODAN_API_KEY`
-  - `HLEDAC_ENABLE_CENSYS` + `CENSYS_API_ID` + `CENSYS_SECRET`
-  - `HLEDAC_ENABLE_GREYNOISE` + `GREYNOISE_API_KEY`
+  - `HLEDAC_ENABLE_SHODAN` + `HLEDAC_SHODAN_API_KEY`
+  - `HLEDAC_ENABLE_CENSYS` + `HLEDAC_CENSYS_API_ID` + `HLEDAC_CENSYS_API_SECRET`
+  - `HLEDAC_ENABLE_GREYNOISE` + `HLEDAC_GREYNOISE_API_KEY`
 - If capability not enabled or API key absent → lane returns [] silently
 - Never block sprint if API key missing — fail-soft is mandatory
+
+#### Credential Naming (L2)
+- Canonical names are `HLEDAC_*`-prefixed. Vendor/legacy aliases stay supported:
+  `SHODAN_API_KEY`, `CENSYS_API_ID`, `CENSYS_API_SECRET`, `CENSYS_SECRET`,
+  `GREYNOISE_API_KEY`, `IPINFO_API_KEY`, `HIBP_API_KEY`.
+- Single source of truth: `_core/env_config.py::API_KEY_ALIASES`.
+- Read path: `ENV.get_api_key("HLEDAC_<VENDOR>_API_KEY")` — canonical wins, then
+  aliases in declaration order. Never `os.environ.get()` directly.
+- Credentials are the ONE thing `env_config` does not memoize — secrets must stay
+  rotatable and must not be retained in a process-wide `functools.cache`.
+- `security/secrets_scrubber.py` redacts the exact same name set via
+  `redact_credential()`; adding a credential to `API_KEY_ALIASES` automatically
+  extends both the read path and the redaction path.
 
 #### API Key Protection
 - API keys must NEVER appear in logs, payload_text, or SprintExporter output

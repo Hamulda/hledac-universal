@@ -121,10 +121,14 @@ async def is_zeronet_available() -> bool:
         _zeronet_check_time = now
         return False
 
+    # ISSUE #8: pooled client — the local ZeroNet daemon is probed repeatedly,
+    # so keep-alive reuse matters and a per-probe client is pure overhead.
+    from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-            resp = await client.get(f"{ZERONET_BASE_URL}/")
-            _zeronet_available = resp.status_code < 500
+        client = await get_or_create_httpx_client("clearnet")
+        resp = await client.get(f"{ZERONET_BASE_URL}/", timeout=httpx.Timeout(5.0))
+        _zeronet_available = resp.status_code < 500
     except Exception:
         _zeronet_available = False
 
@@ -159,33 +163,36 @@ async def fetch_zeronet_site(
     if inner_path:
         url = f"{url}/{inner_path.lstrip('/')}"
 
+    # ISSUE #8: pooled client; per-call timeout preserved as request override.
+    from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                content_length = resp.headers.get("Content-Length")
-                if content_length:
-                    if int(content_length) > max_size:
-                        logger.warning(
-                            "ZeroNet response too large: %s bytes for %s",
-                            content_length,
-                            address,
-                        )
-                        return None
-                content = resp.text
-                if len(content.encode("utf-8")) > max_size:
+        client = await get_or_create_httpx_client("clearnet")
+        resp = await client.get(url, timeout=httpx.Timeout(timeout))
+        if resp.status_code == 200:
+            content_length = resp.headers.get("Content-Length")
+            if content_length:
+                if int(content_length) > max_size:
                     logger.warning(
-                        "ZeroNet response too large after decode: %s",
+                        "ZeroNet response too large: %s bytes for %s",
+                        content_length,
                         address,
                     )
                     return None
-                return content
-            logger.debug(
-                "ZeroNet fetch failed: status %s for %s",
-                resp.status_code,
-                address,
-            )
-            return None
+            content = resp.text
+            if len(content.encode("utf-8")) > max_size:
+                logger.warning(
+                    "ZeroNet response too large after decode: %s",
+                    address,
+                )
+                return None
+            return content
+        logger.debug(
+            "ZeroNet fetch failed: status %s for %s",
+            resp.status_code,
+            address,
+        )
+        return None
     except TimeoutError, httpx.TimeoutException:
         logger.debug("ZeroNet fetch timeout: %s", address)
         return None
@@ -213,14 +220,17 @@ async def fetch_zeronet_json(
         return None
 
     url = f"{ZERONET_BASE_URL}/{address}/{inner_path.lstrip('/')}"
+    # ISSUE #8: pooled client; per-call timeout preserved as request override.
+    from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                content_length = resp.headers.get("Content-Length")
-                if content_length and int(content_length) > ZERONET_MAX_SIZE:
-                    return None
-                return resp.json()
+        client = await get_or_create_httpx_client("clearnet")
+        resp = await client.get(url, timeout=httpx.Timeout(timeout))
+        if resp.status_code == 200:
+            content_length = resp.headers.get("Content-Length")
+            if content_length and int(content_length) > ZERONET_MAX_SIZE:
+                return None
+            return resp.json()
     except Exception as e:
         logger.debug("ZeroNet JSON fetch error %s/%s: %s", address, inner_path, e)
     return None

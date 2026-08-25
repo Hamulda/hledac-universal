@@ -53,10 +53,7 @@ def _entry_hash(title: str, published_raw: str) -> str:
     return xxhash.xxh3_64(f"{title or ''}|{published_raw or ''}").hexdigest()
 
 
-try:
-    import defusedxml.ElementTree as _DET
-except ImportError:
-    import xml.etree.ElementTree as _DET
+_DET = lazy_import("defusedxml.ElementTree", default=lazy_import("xml.etree.ElementTree"))
 if TYPE_CHECKING:
     from hledac.universal.fetching.public_fetcher import FetchResult
 logger = logging.getLogger(__name__)
@@ -1469,7 +1466,9 @@ def discover_feed_urls_from_html(
         parse_error = str(e)
     base_href = parser.base_href
     base_url = base_href if base_href else page_url
-    seen_urls: set[str] = set()
+    # M-2026-FIX: bounded RBF for URL dedup (was unbounded set[str]).
+    from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+    seen_urls: RotatingBloomFilter = RotatingBloomFilter(max_elements=50_000, error_rate=0.005)
     hits: list[FeedDiscoveryHit] = []
     discovered_ts = time.time()
     for hit_dict in parser.hits:
@@ -1833,6 +1832,7 @@ async def async_fetch_all_runtime_feeds(
 
 
 from hledac.universal.utils.html_parse_pool import parse_html_links as _parse_html_links
+from hledac.universal.utils.optional_imports import lazy_import
 
 
 async def parse_html_async(html: str) -> list[dict]:
@@ -1842,7 +1842,9 @@ async def parse_html_async(html: str) -> list[dict]:
 
 def _deduplicate_entries(entries: list[FeedEntryHit]) -> list[FeedEntryHit]:
     """Deduplicate entries by URL + title + published_raw."""
-    seen_keys: set[str] = set()
+    # M-2026-FIX: was unbounded set[str] — bounded RBF keeps memory in check.
+    from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+    seen_keys: RotatingBloomFilter = RotatingBloomFilter(max_elements=50_000, error_rate=0.005)
     deduped: list[FeedEntryHit] = []
     for entry in entries:
         key = _entry_dedup_key(entry.entry_url, entry.title, entry.published_raw, None, None)

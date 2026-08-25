@@ -25,13 +25,11 @@ import os
 import time
 import urllib.parse
 
-try:
-    import defusedxml.ElementTree as _DET
-except ImportError:
-    import xml.etree.ElementTree as _DET
+_DET = lazy_import("defusedxml.ElementTree", default=lazy_import("xml.etree.ElementTree"))
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
+from hledac.universal.utils.optional_imports import lazy_import
 
 logger = logging.getLogger(__name__)
 _SOURCE_NAME: str = "wayback_sitemap"
@@ -299,7 +297,11 @@ def _aggregate_hits(
     sitemap_results: list[tuple[str, list[str]]], raw_input: str, max_results: int, now_ts: float
 ) -> list[DiscoveryHit]:
     """Phase 4: Aggregate sitemap results into DiscoveryHit list."""
-    seen_urls: set[str] = set()
+    # M-2026-FIX: was unbounded ``set[str]`` — converted to RotatingBloomFilter
+    # for bounded memory under long sprints. RBF is API-compatible (``add`` +
+    # ``__contains__`` work the same way as set semantics for dedup).
+    from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+    seen_urls: RotatingBloomFilter = RotatingBloomFilter(max_elements=200_000, error_rate=0.005)
     hits_list: list[DiscoveryHit] = []
 
     for task_result in sitemap_results:
@@ -313,7 +315,7 @@ def _aggregate_hits(
             continue
 
         for url in urls:
-            if url in seen_urls or not url:
+            if not url or url in seen_urls:
                 continue
 
             snapshot_url = _build_wayback_url(url)

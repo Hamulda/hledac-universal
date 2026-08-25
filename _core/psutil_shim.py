@@ -36,8 +36,6 @@ in memory pressure detection when psutil is unavailable.
 
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-
 try:
     import psutil as _psutil_module
 

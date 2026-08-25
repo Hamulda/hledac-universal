@@ -131,7 +131,9 @@ async def async_search_historical_frontier(
             source_family="historical",
         )
 
-    seen_urls: set[str] = set()
+    # M-2026-FIX: was unbounded set[str] — RBF bounds memory.
+    from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+    seen_urls: RotatingBloomFilter = RotatingBloomFilter(max_elements=200_000, error_rate=0.005)
     hits_list: list[DiscoveryHit] = []
     now_ts = time.time()
 

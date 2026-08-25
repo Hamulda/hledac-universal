@@ -352,23 +352,29 @@ async def _dump_elasticsearch_python(host: str, port: int, timeout_s: float) -> 
         "error": None,
     }
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_s)) as client:
-            resp = await client.get(f"http://{host}:{port}/_cat/indices?format=json")
-            if resp.status_code == 200:
-                indices = resp.json()
-                results = []
-                for idx in indices:
-                    results.append(
-                        {
-                            "index": idx.get("index", "unknown"),
-                            "document_count": idx.get("docs.count"),
-                            "documents_json": None,
-                            "error": "python_fallback: index listed but docs not extracted (Rust native_db not compiled)",
-                        }
-                    )
-                return results if results else [result]
-            else:
-                result["error"] = f"HTTP {resp.status_code}"
+        # ISSUE #8: pooled client; per-call timeout kept as request override.
+        from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
+        client = await get_or_create_httpx_client("clearnet")
+        resp = await client.get(
+            f"http://{host}:{port}/_cat/indices?format=json",
+            timeout=httpx.Timeout(timeout_s),
+        )
+        if resp.status_code == 200:
+            indices = resp.json()
+            results = []
+            for idx in indices:
+                results.append(
+                    {
+                        "index": idx.get("index", "unknown"),
+                        "document_count": idx.get("docs.count"),
+                        "documents_json": None,
+                        "error": "python_fallback: index listed but docs not extracted (Rust native_db not compiled)",
+                    }
+                )
+            return results if results else [result]
+        else:
+            result["error"] = f"HTTP {resp.status_code}"
     except Exception as e:
         result["error"] = str(e)
 

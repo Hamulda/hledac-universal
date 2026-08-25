@@ -313,8 +313,8 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
             None => continue,
         };
         
-        let pattern_id = m);
-        let pattern_idx = pattern_id);
+        let pattern_id = m.as_str();
+        let pattern_idx = pattern_id.as_str();
         
         if pattern_idx >= ioc_types.len() {
             continue;
@@ -403,8 +403,8 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
             None => continue,
         };
         
-        let pattern_id = m);
-        let pattern_idx = pattern_id);
+        let pattern_id = m.as_str();
+        let pattern_idx = pattern_id.as_str();
         
         if pattern_idx >= ioc_types.len() {
             continue;
@@ -416,8 +416,8 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
         if value.is_empty() {
             continue;
         }
-        let start = m);
-        let end = m);
+        let start = m.as_str();
+        let end = m.as_str();
 
         if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
             continue;
@@ -426,7 +426,7 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
             continue;
         }
 
-        let label = ioc_type);
+        let label = ioc_type.as_str();
         let key = (label.to_string(), value.to_string());
         if seen.insert(key) {
             results.push((start, end, value.to_string(), label.to_string()));
@@ -450,7 +450,7 @@ pub fn batch_extract_structured_entities(
     }
 
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS));
-    let n = texts);
+    let n = texts.as_str();
 
     // Release GIL during rayon parallel scan — rayon workers are pure Rust (no Python objects).
     // GIL is reacquired automatically when the closure returns.
@@ -516,7 +516,7 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
 
     // Memory guard: limit batch size
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS));
-    let n = texts);
+    let n = texts.as_str();
 
     // Release GIL during rayon parallel scan — rayon workers are pure Rust (no Python objects).
     // GIL is reacquired automatically when the closure returns.
@@ -554,7 +554,7 @@ pub fn batch_ioc_extract_unified_python<'py>(
     }
 
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS));
-    let n = texts);
+    let n = texts.as_str();
 
     let rust_results: Vec<Vec<(String, String)>> = release_gil(py, move || {
         crate::mixed_pool(n).install(|| {

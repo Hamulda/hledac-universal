@@ -531,7 +531,7 @@ class MultiLevelContextCache:
         while self._get_l1_size_bytes() > self.l1_max_size_bytes and self.l1_cache:
             lfu_id = min(self._l1_freq, key=self._l1_freq.get) if self._l1_freq else None
             if lfu_id and lfu_id in self.l1_cache:
-                self.l1_cache.pop(lfu_id)
+                oldest_id, oldest_entry = (lfu_id, self.l1_cache.pop(lfu_id))
                 self._l1_freq.pop(lfu_id, None)
             else:
                 oldest_id, oldest_entry = self.l1_cache.popitem(last=False)

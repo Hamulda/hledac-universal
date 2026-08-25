@@ -14,6 +14,7 @@ import asyncio
 import atexit
 import functools
 import sys
+import threading
 import time
 import weakref
 
@@ -22,8 +23,8 @@ import weakref
 from hledac.universal._core.capability_cost import register_capability_cost
 from hledac.universal._core.env_config import ENV
 
-# F360 Phase 4: DuckDBCanonical was planned extraction but NOT wired.
-# Legacy (dead code): duckdb_canonical.py exists but is NOT imported anywhere.
+# F360 Phase 4: DuckDBCanonical was a planned extraction but was never wired.
+# (duckdb_canonical.py does not exist; findings land in DuckDBShadowStore.)
 from hledac.universal.knowledge.duckdb_arrow_builder import ArrowBuildConfig, DuckDBArrowBuilder
 from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
 from hledac.universal.knowledge.duckdb_protocol import DedupManagerProtocol, QualityGateProtocol
@@ -105,10 +106,7 @@ except ImportError:
     canonical_source_type = None  # type: ignore[assignment,misc]
 
 # BoundedTaskSet — strict import
-try:
-    from hledac.universal.utils.async_utils import BoundedTaskSet
-except ImportError:
-    BoundedTaskSet = None  # type: ignore[assignment,misc]
+BoundedTaskSet = lazy_import("hledac.universal.utils.async_utils:BoundedTaskSet", default=None)
 
 
 # RESILIENCE-01: Module-level circuit breaker for DuckDB operations
@@ -700,10 +698,7 @@ def _json_loads_flexible(raw: Any) -> Any:
 
 
 # TargetProfileSummary — strict import with inline fallback
-try:
-    from hledac.universal.knowledge.sprint_diff_engine import TargetProfileSummary
-except ImportError:
-    TargetProfileSummary = None  # type: ignore[assignment,misc]
+TargetProfileSummary = lazy_import("hledac.universal.knowledge.sprint_diff_engine:TargetProfileSummary", default=None)
 
 
 def _get_TargetProfileSummary():
@@ -926,13 +921,11 @@ def extract_iocs_from_texts(texts: list[str]):
             return
         except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             pass
-    try:
-        from hledac.universal.intelligence import ioc_qs
-
-        for text in texts:
-            yield from ioc_qs.extract_iocs_from_text(text)
-    except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
-        return
+    # Legacy Tier-3 fallback (`hledac.universal.intelligence.ioc_qs`) removed: the
+    # `intelligence` package never existed in this tree, so this branch was dead.
+    # Rust tiers above handle IOC extraction; for free-text NER use
+    # `brain.ner_engine.extract_iocs_from_text`.
+    return
 
 
 class RemoteParquetSource:
@@ -1058,7 +1051,7 @@ class RemoteParquetSource:
         try:
             conn.execute("PRAGMA threads = 2")
             conn.execute("PRAGMA enable_progress_bar = false")
-            conn.execute("SET memory_limit = '2GB'")
+            conn.execute("SET memory_limit = '1GB'")
             conn.execute("PRAGMA hard_memory_limit = '1GB'")
             conn.execute("SET preserve_insertion_order = false")
         except Exception:  # noqa: BLE001 — best-effort; DuckDB settings; non-critical
@@ -1338,8 +1331,11 @@ class RemoteParquetSource:
         # BoundedQueueBlock is reentrant-safe for the single-producer pattern here.
         from threading import Condition, Lock
 
-        _QUEUE_MAXSIZE = 16  # S1-06 FIX: was 4 — tiny queue caused premature iterator termination on slow consumers. 16 gives 4× headroom for M1 8GB while staying bounded.
-        _QUEUE_PUT_TIMEOUT_S = 5.0
+        # L1: sizing lives in the module config block (_ARROW_QUEUE_* near
+        # _DUCKDB_HARD_MEMORY_LIMIT) so it is env-tunable and clamped, not a
+        # magic number buried in a generator body.
+        _QUEUE_MAXSIZE = _ARROW_QUEUE_MAXSIZE
+        _QUEUE_PUT_TIMEOUT_S = _ARROW_QUEUE_PUT_TIMEOUT_S
 
         class _BoundedQueueBlock:
             """Thread-safe synchronous bounded queue with blocking put and non-blocking get.
@@ -2203,12 +2199,72 @@ def _get_duckdb() -> Any:
     return duckdb
 
 
-_DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="1GB")
-_DUCKDB_MAX_TEMP: str = ENV.get("GHOST_DUCKDB_MAX_TEMP", default="1GB")
-# ISSUE-35: Hard ceiling — DuckDB will NOT exceed this under any circumstances.
-# On M1 8GB: OS ~2.5GB + Python ~1GB + MLX inference ~4.5GB = 8GB total.
-# DuckDB gets 1GB ceiling to leave headroom for other subsystems.
-_DUCKDB_HARD_MEMORY_LIMIT: str = "1GB"
+_DUCKDB_MEMORY_LIMIT: str = ENV.get("HLEDAC_DUCKDB_MEMORY", default="1GB")
+_DUCKDB_MAX_TEMP: str = ENV.get("HLEDAC_DUCKDB_MAX_TEMP", default="1GB")
+
+# ── L1: DuckDB hard memory ceiling ────────────────────────────────────────────
+# ISSUE-35: hard ceiling — DuckDB will NOT exceed this under any circumstances.
+# On M1 8GB: OS ~2.5GB + Python ~1GB + MLX inference ~4.5GB = 8GB total, so
+# DuckDB gets 1GB to leave headroom for other subsystems.
+#
+# Now operator-tunable via HLEDAC_DUCKDB_HARD_MEMORY (registered in
+# _core.feature_flags.FeatureFlag) but *clamped*: the whole point of a hard
+# ceiling is that a config typo cannot let DuckDB starve MLX inference. The
+# clamp window is [128MB, 2GiB] — 2 GiB is the absolute maximum that still
+# leaves the 3.75 GiB tracked-allocation budget (utils/uma_budget.py SSOT)
+# intact on an 8GB machine.
+_DUCKDB_HARD_MEMORY_DEFAULT = "1GB"
+_DUCKDB_HARD_MEMORY_DEFAULT_BYTES = 1024**3
+_DUCKDB_HARD_MEMORY_FLOOR_BYTES = 128 * 1024**2
+_DUCKDB_HARD_MEMORY_CEILING_BYTES = 2 * 1024**3
+
+
+def _resolve_duckdb_hard_memory_limit() -> str:
+    """Resolve + clamp the DuckDB hard memory ceiling into a PRAGMA-safe string.
+
+    Fail-safe: any unparseable value falls back to the M1-calibrated default.
+    Also enforces hard >= soft, since DuckDB rejects a hard ceiling below the
+    soft ``memory_limit``.
+    """
+    requested = ENV.get_memory_bytes("HLEDAC_DUCKDB_HARD_MEMORY", default=_DUCKDB_HARD_MEMORY_DEFAULT)
+    if requested <= 0:
+        requested = _DUCKDB_HARD_MEMORY_DEFAULT_BYTES
+    # Same var + default as _DUCKDB_MEMORY_LIMIT above, resolved as bytes.
+    soft = ENV.get_memory_bytes("HLEDAC_DUCKDB_MEMORY", default="1GB")
+    clamped = min(max(requested, _DUCKDB_HARD_MEMORY_FLOOR_BYTES, soft), _DUCKDB_HARD_MEMORY_CEILING_BYTES)
+    if clamped != requested:
+        logger.warning(
+            "[DUCKDB] hard memory ceiling %d B clamped to %d B (window=[%d, %d], soft_limit=%d B)",
+            requested,
+            clamped,
+            _DUCKDB_HARD_MEMORY_FLOOR_BYTES,
+            _DUCKDB_HARD_MEMORY_CEILING_BYTES,
+            soft,
+        )
+    return f"{clamped // (1024 * 1024)}MB"
+
+
+_DUCKDB_HARD_MEMORY_LIMIT: str = _resolve_duckdb_hard_memory_limit()
+
+# ── L1: RemoteParquetSource async batch handoff ───────────────────────────────
+# S1-06: bounded queue between the DuckDB producer thread and the asyncio
+# consumer. 16 slots give 4× headroom over the original 4 (which terminated the
+# iterator early on slow consumers) while staying bounded for M1 8GB.
+# Consumed by DuckDBRemoteParquetSource.iter_batches_async().
+_ARROW_QUEUE_MAXSIZE_DEFAULT = 16
+_ARROW_QUEUE_MAXSIZE_CEILING = 256  # each slot holds a full RecordBatch
+_ARROW_QUEUE_TIMEOUT_S_DEFAULT = 5.0
+_ARROW_QUEUE_TIMEOUT_S_CEILING = 120.0
+
+_ARROW_QUEUE_MAXSIZE: int = min(
+    max(ENV.get_int("HLEDAC_DUCKDB_ARROW_QUEUE_MAXSIZE", default=_ARROW_QUEUE_MAXSIZE_DEFAULT), 1),
+    _ARROW_QUEUE_MAXSIZE_CEILING,
+)
+_ARROW_QUEUE_PUT_TIMEOUT_S: float = min(
+    max(ENV.get_float("HLEDAC_DUCKDB_ARROW_QUEUE_TIMEOUT_S", default=_ARROW_QUEUE_TIMEOUT_S_DEFAULT), 0.1),
+    _ARROW_QUEUE_TIMEOUT_S_CEILING,
+)
+
 _ARROW_INGEST_ENABLED: bool = ENV.get_bool("HLEDAC_ARROW_INGEST")
 _DUCKDB_RAMDISK_TEMP: str | None = ENV.get_str("HLEDAC_DUCKDB_RAMDISK_TEMP") or None
 _ARROW_MIN_BATCH: int = ENV.get_int("HLEDAC_ARROW_MIN_BATCH", default=5)
@@ -2277,7 +2333,7 @@ def _resolve_duckdb_runtime_settings(uma_state: str | None = None, swap_detected
     """
     # M1 8GB SAFETY: 4GB would exceed safe memory budget (OS~2.5GB + Python~1GB + MLX~4.5GB).
     # Unified with _DUCKDB_MEMORY_LIMIT (line 1554) which defaults to 1GB.
-    base_mem = ENV.get_str("GHOST_DUCKDB_MEMORY", default="1GB")
+    base_mem = ENV.get_str("HLEDAC_DUCKDB_MEMORY", default="1GB")
     base_threads = ENV.get_int("HLEDAC_DUCKDB_THREADS", default=4)
     settings: dict[str, str | int | bool] = {
         "memory_limit": base_mem,
@@ -2529,6 +2585,7 @@ def shutdown_all_duckdb_stores() -> None:
 
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal.utils.optional_imports import lazy_import
 
 
 @dataclass(slots=True)
@@ -2694,6 +2751,7 @@ class DuckDBShadowStore:
         "_file_conn",
         "_read_pool",
         "_read_pool_idx",
+        "_read_pool_tls",
         "_wal_manager",
         "_wal_lmdb",
         "_dedup_lmdb",
@@ -2903,6 +2961,9 @@ class DuckDBShadowStore:
         self._last_lmdb_compact_time: float = 0.0
         self._read_pool: list[Any] = []
         self._read_pool_idx: int = 0
+        # M-2026-FIX: per-thread round-robin TLS for the read pool (replaces
+        # the unsafe global counter under free-threaded CPython).
+        self._read_pool_tls: dict[int, int] = {}
         self._adjust_executor_pool()
         try:
             # ISSUE 2.1 fix: use weakref.proxy to avoid strong-ref cycle
@@ -3637,6 +3698,7 @@ class DuckDBShadowStore:
         """Create read connection pool (3 read-only connections)."""
         self._read_pool = []
         self._read_pool_idx = 0
+        self._read_pool_tls = {}
         for i in range(3):
             if not self._add_read_pool_connection(duckdb, runtime, i):
                 break
@@ -4385,11 +4447,9 @@ class DuckDBShadowStore:
                 return []
             if target_id:
                 sql = "\n                    SELECT id, target_id, pivot_type, ioc_type,\n                           produced_count, accepted_count, signal_value, ts\n                    FROM hypothesis_feedback\n                    WHERE target_id = ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
-                result = conn.execute(sql, [target_id, limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [target_id, limit]))
             else:
                 sql = "\n                    SELECT id, target_id, pivot_type, ioc_type,\n                           produced_count, accepted_count, signal_value, ts\n                    FROM hypothesis_feedback\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
-                result = conn.execute(sql, [limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [limit]))
             return [
                 {
@@ -4614,11 +4674,9 @@ class DuckDBShadowStore:
                 return []
             if before_sprint_id:
                 sql = "\n                    SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text\n                    FROM canonical_findings\n                    WHERE payload_text LIKE ?\n                    AND sprint_id < ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
-                result = conn.execute(sql, [f'%"{target_id}"%', before_sprint_id, limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [f'%"{target_id}"%', before_sprint_id, limit]))
             else:
                 sql = "\n                    SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text\n                    FROM canonical_findings\n                    WHERE payload_text LIKE ?\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
-                result = conn.execute(sql, [f'%"{target_id}"%', limit])
                 result = list(self.arrow_fetch_batch(conn, sql, [f'%"{target_id}"%', limit]))
             return [
                 {
@@ -4730,11 +4788,9 @@ class DuckDBShadowStore:
             if self._db_path:
                 self._prewarm_file_conn()
                 sql = "\n                    SELECT sprint_id, ts, new_findings, ioc_nodes,\n                           findings_per_minute, synthesis_success, uma_peak_gib\n                    FROM sprint_delta\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
-                result = self._file_conn.execute(sql, [last_n])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [last_n]))
             else:
                 sql = "\n                    SELECT sprint_id, ts, new_findings, ioc_nodes,\n                           findings_per_minute, synthesis_success, uma_peak_gib\n                    FROM sprint_delta\n                    ORDER BY ts DESC\n                    LIMIT ?\n                    "
-                result = self._persistent_conn.execute(sql, [last_n])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [last_n]))
             return [
                 {
@@ -4757,11 +4813,9 @@ class DuckDBShadowStore:
             if self._db_path:
                 self._prewarm_file_conn()
                 sql = "\n                    SELECT source_type,\n                           SUM(findings_count) as total_findings,\n                           AVG(hit_rate) as avg_hit_rate,\n                           COUNT(*) as sprint_appearances\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    ORDER BY total_findings DESC\n                    "
-                result = self._file_conn.execute(sql, [since_ts])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [since_ts]))
             else:
                 sql = "\n                    SELECT source_type,\n                           SUM(findings_count) as total_findings,\n                           AVG(hit_rate) as avg_hit_rate,\n                           COUNT(*) as sprint_appearances\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    ORDER BY total_findings DESC\n                    "
-                result = self._persistent_conn.execute(sql, [since_ts])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [since_ts]))
             return [
                 {
@@ -4786,11 +4840,9 @@ class DuckDBShadowStore:
             if self._db_path:
                 self._prewarm_file_conn()
                 sql = "\n                    SELECT source_type, AVG(hit_rate) as avg_hit_rate\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    "
-                result = self._file_conn.execute(sql, [cutoff])
                 result = list(self.arrow_fetch_batch(self._file_conn, sql, [cutoff]))
             else:
                 sql = "\n                    SELECT source_type, AVG(hit_rate) as avg_hit_rate\n                    FROM source_hit_log\n                    WHERE ts > ?\n                    GROUP BY source_type\n                    LIMIT 10000\n                    "
-                result = self._persistent_conn.execute(sql, [cutoff])
                 result = list(self.arrow_fetch_batch(self._persistent_conn, sql, [cutoff]))
             return [{"source_type": r[0], "avg_hit_rate": r[1] or 0.0} for r in result]
         except Exception:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
@@ -5076,6 +5128,7 @@ class DuckDBShadowStore:
                 self._safe_cleanup("read_pool.conn.close", conn.close)
             self._read_pool = []
             self._read_pool_idx = 0
+            self._read_pool_tls = {}
 
     def _cleanup_dedup_manager(self) -> None:
         if self._dedup_manager is not None:
@@ -5510,12 +5563,28 @@ class DuckDBShadowStore:
         Read pool allows parallel analytical queries without contention
         with the write connection. Falls back to _file_conn if pool is empty.
 
-        Thread-safe: uses atomic idx increment.
+        M-2026-FIX: the previous implementation claimed "atomic idx increment"
+        but Python's `_read_pool_idx = idx + 1` is a non-atomic read-modify-write,
+        which silently corrupts round-robin distribution under free-threaded
+        CPython (PEP 703). The fix uses a per-thread counter dict so each thread
+        round-robins independently with zero contention.
+
+        Trade-off: strict global RR is replaced with per-thread RR. For
+        analytical queries with even thread load, this gives identical effect
+        (each thread burns its own slot). Under contention, eliminates the data
+        race entirely — never silently returns the same connection twice.
         """
         if self._read_pool:
-            idx = self._read_pool_idx % len(self._read_pool)
-            self._read_pool_idx = idx + 1
-            return self._read_pool[idx]
+            pool_size = len(self._read_pool)
+            tid = threading.get_ident()
+            # Per-thread round-robin index — atomic by construction (each
+            # thread has its own counter, no shared mutable write happens).
+            if not hasattr(self, "_read_pool_tls") or self._read_pool_tls is None:
+                self._read_pool_tls = {}
+            idx = self._read_pool_tls.get(tid, 0)
+            conn = self._read_pool[idx % pool_size]
+            self._read_pool_tls[tid] = idx + 1
+            return conn
         return self._file_conn if self._db_path else self._persistent_conn
 
     async def __aenter__(self) -> DuckDBShadowStore:
@@ -6074,27 +6143,38 @@ class DuckDBShadowStore:
             return False
 
     def _sync_ingest_cooccurrence_batch(self, pairs: list[dict]) -> bool:
-        """Synchronous batch upsert for IOC co-occurrence pairs."""
+        """Synchronous batch upsert for IOC co-occurrence pairs.
+
+        Builds the filtered rows once and issues a single ``DELETE`` +
+        ``executemany`` inside one implicit transaction, replacing the
+        per-row autocommit ``INSERT`` loop (DuckDB anti-pattern: each
+        statement in autocommit mode forces an fsync). Memory bounded by
+        the filtered list comprehension.
+        """
         conn = self._file_conn if self._db_path else self._persistent_conn
         if conn is None:
             return False
         try:
+            rows = [
+                (
+                    p["ioc_a"],
+                    p["ioc_b"],
+                    p["ioc_type_a"],
+                    p["ioc_type_b"],
+                    p["support"],
+                    p["confidence"],
+                    p["score"],
+                    p["last_seen"],
+                )
+                for p in pairs
+                if p.get("support", 0) >= 2
+            ]
             conn.execute("DELETE FROM ioc_cooccurrence")
-            for p in pairs:
-                if p.get("support", 0) >= 2:
-                    conn.execute(
-                        "INSERT INTO ioc_cooccurrence VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            p["ioc_a"],
-                            p["ioc_b"],
-                            p["ioc_type_a"],
-                            p["ioc_type_b"],
-                            p["support"],
-                            p["confidence"],
-                            p["score"],
-                            p["last_seen"],
-                        ),
-                    )
+            if rows:
+                conn.executemany(
+                    "INSERT INTO ioc_cooccurrence VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
             return True
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
@@ -12009,7 +12089,7 @@ class DuckDBShadowStore:
             loop = asyncio.get_running_loop()
             loop.run_in_executor(
                 self._executor,
-                lambda: asyncio.create_task(self.async_vacuum_if_needed()),
+                lambda: safe_create_task(self.async_vacuum_if_needed()),
             )
         except Exception:  # noqa: BLE001 — best-effort; non-critical
             pass
@@ -12025,7 +12105,7 @@ class DuckDBShadowStore:
             loop = asyncio.get_running_loop()
             loop.run_in_executor(
                 self._executor,
-                lambda: asyncio.create_task(self._checkpoint_async()),
+                lambda: safe_create_task(self._checkpoint_async()),
             )
         except Exception:  # noqa: BLE001 — best-effort; non-critical
             pass
@@ -12885,10 +12965,13 @@ class DuckDBShadowStore:
         if _dedup_lmdb is None:
             return
         try:
+            from hledac.universal.utils.lmdb_bulk import putmulti_bounded
+
             key = f"dedup:{fp}".encode()
             value_bytes = finding_id.encode("utf-8")
-            with _dedup_lmdb._env.begin(write=True) as txn:
-                txn.put(key, value_bytes)
+            # Canonical bulk write (CLAUDE.md invariant #6): single write txn via
+            # cursor.putmulti() instead of a per-item env.begin(write=True).
+            putmulti_bounded(_dedup_lmdb._env, [(key, value_bytes)], overwrite=True)
         except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
             pass
 

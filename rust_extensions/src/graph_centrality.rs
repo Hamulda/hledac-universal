@@ -50,7 +50,7 @@ pub fn batch_centrality_all<'py>(
     py: Python<'py>,
     adjacency: Vec<(String, Vec<String>)>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let n = adjacency);
+    let n = adjacency.len();
     if n == 0 {
         return Ok(PyDict::new(py));
     }
@@ -341,7 +341,7 @@ pub fn betweenness_single(
     adjacency: Vec<(String, Vec<String>)>,
     source_node: String,
 ) -> PyResult<f64> {
-    let n = adjacency);
+    let n = adjacency.len();
     if n == 0 {
         return Ok(0.0);
     }
@@ -420,7 +420,7 @@ pub fn betweenness_batch<'py>(
     adjacency: Vec<(String, Vec<String>)>,
     source_nodes: Vec<String>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let n = adjacency);
+    let n = adjacency.len();
     if n == 0 {
         return Ok(PyDict::new(py));
     }
@@ -491,7 +491,7 @@ pub fn betweenness_batch<'py>(
             }
 
             let bet = if s < n { delta[s] } else { 0.0 };
-            let source_name = adjacency[s].0);
+            let source_name = adjacency[s].0.clone();
             (source_name, bet * norm)
         })
         );
@@ -539,7 +539,7 @@ mod tests {
             eigenvector: 0.4,
             pagerank: 0.2,
         };
-        let nc2 = nc);
+        let nc2 = nc.clone();
         assert_eq!(nc.node_id, nc2.node_id);
     }
 }

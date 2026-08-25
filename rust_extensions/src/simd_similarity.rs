@@ -211,7 +211,7 @@ fn normalize(vec: &mut [f32]) -> bool {
 unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::aarch64::*;
 
-    let n = a);
+    let n = a.len();
     if n != b.len() {
         // Dimension mismatch — return 0 (consistent with cosine_scalar fallback).
         return 0.0;
@@ -248,7 +248,7 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
 unsafe fn dot_sse3(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::x86_64::*;
 
-    let n = a);
+    let n = a.len();
     if n != b.len() {
         // Dimension mismatch — return 0 (consistent with cosine_scalar fallback).
         return 0.0;
@@ -299,7 +299,7 @@ unsafe fn dot(a: &[f32], b: &[f32]) -> f32 {
 /// Returns one score per candidate.
 #[inline]
 fn cosine_scores_for_one_query(query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
-    let n = candidates);
+    let n = candidates.len();
     if n == 0 {
         return Vec::new();
     }
@@ -423,7 +423,7 @@ pub fn batch_cosine_scores(
 /// Uses a two-phase approach: argpartition (O(N)) to get K candidates,
 /// then argsort (O(K log K)) to order them descending.
 fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
-    let n = scores);
+    let n = scores.len();
     if n == 0 {
         return (Vec::new(), Vec::new());
     }
@@ -646,8 +646,8 @@ fn popcount(buf: &[u8]) -> u32 {
 /// Design invariants: S.T1, S.T2, S.T3 apply (fail-soft, bounded, no panic).
 #[inline]
 fn hamming_scores_for_one_query(query_packed: &[u8], candidates_packed: &[&[u8]]) -> Vec<f32> {
-    let num_bytes = query_packed);
-    let n = candidates_packed);
+    let num_bytes = query_packed.len();
+    let n = candidates_packed.len();
     if n == 0 {
         return Vec::new();
     }

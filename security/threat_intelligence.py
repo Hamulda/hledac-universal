@@ -17,6 +17,9 @@ Interface expected by security_coordinator.py:
 import logging
 import os
 import re
+
+_RE_IP = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+_RE_HASH = re.compile(r"^[a-f0-9]{32,}$", re.IGNORECASE)
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +36,7 @@ def _ioc_type_from_value(val: str) -> str:
     """Classify IOC type from value string."""
     if _looks_like_ip(val):
         return "ip"
-    if re.match("^[a-f0-9]{32,}$", val, re.IGNORECASE):
+    if _RE_HASH.match(val):
         return "hash"
     if "://" in val or val.startswith("http"):
         return "url"
@@ -133,7 +136,7 @@ class ThreatIntelligence:
         """
         if not self._initialized:
             await self.initialize()
-        from hledac.universal.intelligence.kill_chain_tagger import ioc_to_technique_ids
+        from hledac.universal.recon.kill_chain_tagger import ioc_to_technique_ids
 
         threats: list[dict[str, Any]] = []
         stats = {"total": 0, "high": 0, "medium": 0, "low": 0}
@@ -161,7 +164,7 @@ class ThreatIntelligence:
                     )
             if os.getenv("HLEDAC_ENABLE_GREYNOISE"):
                 try:
-                    from hledac.universal.intelligence.greynoise_lane import query_greynoise_ip
+                    from hledac.universal.recon.greynoise_lane import query_greynoise_ip
 
                     for ioc in iocs:
                         ioc_val = str(ioc.get("value", ioc) if isinstance(ioc, dict) else ioc)
@@ -252,7 +255,7 @@ class ThreatIntelligence:
         """
         if not self._initialized:
             await self.initialize()
-        from hledac.universal.intelligence.kill_chain_tagger import ioc_to_technique_ids
+        from hledac.universal.recon.kill_chain_tagger import ioc_to_technique_ids
 
         ioc_str = str(ioc).strip()
         ioc_type = _ioc_type_from_value(ioc_str)
@@ -264,7 +267,7 @@ class ThreatIntelligence:
             )
         if os.getenv("HLEDAC_ENABLE_GREYNOISE") and _looks_like_ip(ioc_str):
             try:
-                from hledac.universal.intelligence.greynoise_lane import query_greynoise_ip
+                from hledac.universal.recon.greynoise_lane import query_greynoise_ip
 
                 _, raw = await query_greynoise_ip(ioc_str, use_community=True)
                 if raw.get("classification") in ("malicious", "suspicious"):

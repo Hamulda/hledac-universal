@@ -239,8 +239,12 @@ class ArxivAdapter:
                 elif query:
                     return await self._search_mode(query, max_results)
                 url = f"{OAI_PMH_ENDPOINT}?{urllib.parse.urlencode(params)}"
-                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S) as client:
-                    response = await client.get(url)
+                # ISSUE #8: pooled client — OAI-PMH paginates over the same host,
+                # so HTTP/2 multiplexing + keep-alive are exactly what we want.
+                from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
+                client = await get_or_create_httpx_client("clearnet")
+                response = await client.get(url, timeout=REQUEST_TIMEOUT_S)
                 if response.status_code != 200:
                     return ArxivResult([], f"HTTP {response.status_code}")
                 content = response.content

@@ -490,12 +490,12 @@ impl SwarmFabric {
         use std::time::Instant;
         
         let start = Instant::now();
-        let url = request.url);
+        let url = request.url.as_str();
         
         let domain = extract_domain(&request.url);
         
         {
-            let breakers = self.circuit_breakers);
+            let breakers = self.circuit_breakers.as_str();
             if let Some(cb) = breakers.get(&domain) {
                 if cb.is_open() {
                     return SwarmResponse::error(
@@ -768,7 +768,7 @@ impl SwarmFabric {
     pub fn get_pool_stats(&self) -> HashMap<String, (usize, usize)> {
         let mut stats = HashMap::new();
         for (transport, pool) in self.pools.iter() {
-            let pool = pool);
+            let pool = pool.as_str();
             stats.insert(
                 transport.as_str().to_string(),
                 (pool.active, pool.max_connections),
@@ -779,7 +779,7 @@ impl SwarmFabric {
 
     /// Check if circuit is open for a domain.
     pub fn is_circuit_open(&self, domain: &str) -> bool {
-        let breakers = self.circuit_breakers);
+        let breakers = self.circuit_breakers.as_str();
         breakers
             .get(domain)
             .map(|cb| cb.is_open())
@@ -1016,7 +1016,7 @@ impl PySwarmFabric {
             }
         };
 
-        let fabric = self.inner);
+        let fabric = self.inner.as_str();
 
         future_into_py(py, async move {
             fabric.execute(request).await.into()
@@ -1043,7 +1043,7 @@ impl PySwarmFabric {
             request
         };
 
-        let fabric = self.inner);
+        let fabric = self.inner.as_str();
 
         future_into_py(py, async move {
             fabric.execute(request).await.into()
@@ -1070,7 +1070,7 @@ impl PySwarmFabric {
             request
         };
 
-        let fabric = self.inner);
+        let fabric = self.inner.as_str();
 
         future_into_py(py, async move {
             fabric.execute(request).await.into()

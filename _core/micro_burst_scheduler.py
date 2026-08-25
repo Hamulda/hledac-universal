@@ -196,7 +196,6 @@ class MicroBurstScheduler:
             self._phase_start_mono = now_mono
             self._phase_transitions += 1
 
-        _elapsed = (now_mono - self._phase_start_mono) * 1000.0 if False else 0.0  # unused
         logger.debug(
             "[PHYSICS-01] Phase: %s → %s (transition #%d)",
             old_phase.name,

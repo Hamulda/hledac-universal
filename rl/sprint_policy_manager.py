@@ -13,15 +13,8 @@ Design:
 Canonical owner: runtime/sprint_scheduler.py (integration point)
 """
 
-# G4 FIX: stdlib json replaced with orjson fallback (M1 optimized, 5-10× faster)
-try:
-    import orjson
-
-    _HAS_ORJSON = True
-except ImportError:
-    import json
-
-    _HAS_ORJSON = False
+# Serialization: orjson (Rust-backed, M1-optimized) — hard dependency, no stdlib fallback needed.
+import orjson
 
 import logging
 import math
@@ -38,7 +31,6 @@ from hledac.universal._core.env_config import ENV
 if TYPE_CHECKING:
     pass
 import numpy as np
-import orjson
 
 try:
     import compression.zstd as _zstd
@@ -459,24 +451,17 @@ class SprintPolicyManager:
                 "epistemic_strength_history": list(getattr(self._state, "epistemic_strength_history", []))[-100:],
             }
 
-            # G4 FIX: Use orjson with fallback for JSON serialization
-            if _HAS_ORJSON:
-                encoded = orjson.dumps(payload, option=orjson.OPT_NON_STR_KEY)
-            else:
-                encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            # orjson (Rust) — hard dependency, no stdlib fallback needed.
+            encoded = orjson.dumps(payload, option=orjson.OPT_NON_STR_KEY)
 
             if ZSTD_AVAILABLE and _zstd:
                 compressed = _zstd.compress(encoded, level=3)
                 with open(self._policy_path, "wb") as f:
                     f.write(compressed)
             else:
-                if _HAS_ORJSON:
-                    with open(self._policy_path, "wb") as f:
-                        f.write(encoded)
-                else:
-                    with open(self._policy_path, "w", encoding="utf-8") as f:
-                        f.write(json.dumps(payload))
-            log.debug("[SprintPolicyManager] State persisted to %s", self._policy_path)
+                with open(self._policy_path, "wb") as f:
+                    f.write(encoded)
+                log.debug("[SprintPolicyManager] State persisted to %s", self._policy_path)
         except Exception as e:
             log.debug("[SprintPolicyManager] _save failed: %s", e)
 

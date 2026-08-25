@@ -1019,11 +1019,11 @@ async def close_public_fetcher_sessions_async() -> dict:
     _close_tor_coro: asyncio.Task | None = None
     _close_i2p_coro: asyncio.Task | None = None
     if _tor_attempted and _SESSION_MGR._tor_session_locally_created:
-        _close_tor_coro = asyncio.create_task(
+        _close_tor_coro = safe_create_task(
             _SESSION_MGR._session_aclose(_SESSION_MGR._tor_session)
     )
     if _i2p_attempted and _SESSION_MGR._i2p_session_locally_created:
-        _close_i2p_coro = asyncio.create_task(
+        _close_i2p_coro = safe_create_task(
             _SESSION_MGR._session_aclose(_SESSION_MGR._i2p_session)
     )
     _tasks = [t for t in (_close_tor_coro, _close_i2p_coro) if t is not None]
@@ -1451,8 +1451,8 @@ async def _fetch_core(
                     max_bytes=max_bytes,
                     headers=headers,
     )
-        except asyncio.TimeoutError:
-            raise asyncio.TimeoutError(
+        except TimeoutError:
+            raise TimeoutError(
                 f"race_ttfb_timeout:{url}:{ttfb_timeout_s or race_timeout:.1f}s"
             ) from None
     else:
@@ -1483,8 +1483,8 @@ async def _fetch_core(
                     ),
                     timeout=ttfb_timeout_s,
     )
-            except asyncio.TimeoutError:
-                raise asyncio.TimeoutError(
+            except TimeoutError:
+                raise TimeoutError(
                     f"ttfb_timeout:{url}:{ttfb_timeout_s:.1f}s"
                 ) from None
         else:
@@ -1890,7 +1890,7 @@ async def async_fetch_public_text_batch(
     # Canonical parallel runner: structured-concurrency cancellation on failure,
     # bounded concurrency, result order preserved via index capture.
     result = await parallel(
-        [asyncio.create_task(_fetch_one(url, idx, _timeout_s=timeout_s, _max_bytes=max_bytes, _ttfb_timeout_s=ttfb_timeout_s)) for idx, url in enumerate(urls)],
+        [safe_create_task(_fetch_one(url, idx, _timeout_s=timeout_s, _max_bytes=max_bytes, _ttfb_timeout_s=ttfb_timeout_s)) for idx, url in enumerate(urls)],
         concurrency=_concurrency,
         taskgroup=True,
         policy="collect",
@@ -1952,7 +1952,7 @@ async def async_fetch_public_text_batch(
     )
 
         _retry_result = await parallel(
-            [asyncio.create_task(_retry_one(x, _timeout_s=timeout_s, _max_bytes=max_bytes, _ttfb_timeout_s=ttfb_timeout_s)) for x in retryable_urls],
+            [safe_create_task(_retry_one(x, _timeout_s=timeout_s, _max_bytes=max_bytes, _ttfb_timeout_s=ttfb_timeout_s)) for x in retryable_urls],
             concurrency=_retry_concurrency,
             taskgroup=True,
             policy="collect",
@@ -2483,7 +2483,7 @@ async def drain_pending_extractions(deadline_s: float=30.0) -> tuple[int, int, f
                 logger.debug('[FETCH] _drain_pending: task failed: %s', err)
         completed = len(pending)
         timed_out = 0
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # Find which tasks didn't complete within timeout
         completed = sum(1 for t in pending if t.done())
         timed_out = len(pending) - completed

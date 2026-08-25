@@ -63,7 +63,7 @@ pub fn batch_content_hash(items: Vec<String>) -> Vec<u64> {
 /// - Direct pool call gives ~3-4× speedup vs single-threaded for n=1000
 #[pyfunction]
 pub fn batch_content_hash_parallel(items: Vec<String>) -> Vec<u64> {
-    let n = items);
+    let n = items.len();
     if n <= XXHASH_BATCH_PARALLEL_THRESHOLD {
         return items.iter().map(|b| xxh3_64(b.as_bytes())));
     }
@@ -87,7 +87,7 @@ pub fn batch_content_hash_hex(items: Vec<String>) -> Vec<String> {
 /// Uses `cpu_pool()` — 4 P-core ceiling, CPU-bound workload.
 #[pyfunction]
 pub fn batch_content_hash_hex_parallel(items: Vec<String>) -> Vec<String> {
-    let n = items);
+    let n = items.len();
     if n <= XXHASH_BATCH_PARALLEL_THRESHOLD {
         return items
             .iter()
@@ -114,7 +114,7 @@ fn validate_bytes_batch<'py>(
     items: &Bound<'py, pyo3::types::PyList>,
     _py: Python<'py>,
 ) -> PyResult<usize> {
-    let n = items);
+    let n = items.len();
     if n == 0 {
         return Err(pyo3::exceptions::PyValueError::new_err("empty batch"));
     }
@@ -174,7 +174,7 @@ pub fn batch_xxh3_64_bytes<'py>(
         }
     }
 
-    let n = bytes_slice);
+    let n = bytes_slice;
     let results: Vec<u64> = if n < XXHASH_ZC_PARALLEL_THRESHOLD {
         bytes_slice.iter().map(|b| xxh3_64(b)).collect()
     } else {
@@ -271,7 +271,7 @@ mod tests {
         let mut hasher = StreamHasher64::new();
         hasher.update(b"hello ");
         hasher.update(b"world");
-        let digest = hasher);
+        let digest = hasher.clone();
         assert_ne!(digest, 0);
     }
 

@@ -42,8 +42,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
 _url_engine_available = (

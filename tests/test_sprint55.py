@@ -102,7 +102,7 @@ class TestGNNPredictor(unittest.IsolatedAsyncioTestCase):
     async def test_gnn_mock_training(self) -> None:
         """Otestuje mock GNN bez reálného MLX."""
         # Just test the wrapper class
-        from hledac.universal.intel.relationship_discovery import GNNPredictorWrapper
+        from hledac.universal.recon.relationship_discovery import GNNPredictorWrapper
 
         wrapper = GNNPredictorWrapper(in_dim=64, hidden_dim=32)
         self.assertEqual(wrapper.in_dim, 64)
@@ -290,7 +290,7 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
 
     async def test_enable_gnn(self) -> None:
         """Ověří, že enable_gnn() inicializuje GNN prediktor."""
-        from hledac.universal.intel.relationship_discovery import RelationshipDiscoveryEngine
+        from hledac.universal.recon.relationship_discovery import RelationshipDiscoveryEngine
 
         engine = RelationshipDiscoveryEngine()
         await engine.enable_gnn()
@@ -299,7 +299,7 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
 
     async def test_gnn_switching(self) -> None:
         """Otestuje, že pro graf s >=500 uzly se použije GNN."""
-        from hledac.universal.intel.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
+        from hledac.universal.recon.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
 
         engine = RelationshipDiscoveryEngine()
 
@@ -318,7 +318,7 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
 
     async def test_gnn_disabled_on_small_graph(self) -> None:
         """Ověří, že při počtu uzlů pod prahem se GNN netrénuje."""
-        from hledac.universal.intel.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
+        from hledac.universal.recon.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
 
         engine = RelationshipDiscoveryEngine()
 

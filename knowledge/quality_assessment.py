@@ -973,7 +973,14 @@ class QualityAssessor:
         tasks = [asyncio.to_thread(self.assess_batch, chunk) for chunk in chunks]
         chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for chunk_result in chunk_results:
+        from hledac.universal.utils.asyncx import _check_gathered
+
+        ok_results, errors = _check_gathered(chunk_results, ctx="assess_findings_quality")
+        if errors:
+            _qlog = _logging.getLogger(__name__)
+            for err in errors:
+                _qlog.error("[quality] assess_batch chunk failed: %s", err)
+        for chunk_result in ok_results:
             results.extend(chunk_result)
 
         return results

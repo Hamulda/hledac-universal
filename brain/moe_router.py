@@ -638,11 +638,14 @@ class MoERouter:
         except Exception:  # noqa: BLE001
             pass
         try:
-            import psutil
+            from hledac.universal.utils.sys_metrics import system_memory_sync
 
-            return psutil.virtual_memory().available / 1024**3
+            avail = system_memory_sync().available_gib
+            if avail > 0:
+                return avail
         except Exception:
-            return 2.0
+            pass
+        return 2.0
 
     async def _route_experts(self, query: str) -> list[tuple[str, float]]:
         """

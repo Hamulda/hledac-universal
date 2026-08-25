@@ -401,7 +401,7 @@ impl SharedMetalBuffer {
     ///     SharedMetalBuffer with data copied into Metal buffer.
     #[staticmethod]
     fn from_numpy(data: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let _py = data);
+        let _py = data.as_str();
 
         let arr_iface = data.call_method0("__array_interface__")?;
         let shape: Vec<usize> = arr_iface.getattr("shape")?.extract()?;

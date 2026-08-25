@@ -24,18 +24,13 @@ from hledac.universal._core.inference_coordinator import (
     InferenceResponse,
     Token,
 )
+from hledac.universal.utils.optional_imports import lazy_import
 
 # Now import backends (TYPE_CHECKING is now False in these modules,
 # but InferenceResponse is the real class from above)
-try:
-    from hledac.universal._core.inference_backends.mlxcel_backend import MlxcelBackend
-except ImportError:
-    MlxcelBackend = None  # type: ignore[assignment]
+MlxcelBackend = lazy_import("hledac.universal._core.inference_backends.mlxcel_backend:MlxcelBackend", default=None)
 
-try:
-    from hledac.universal._core.inference_backends.coreml_backend import CoreMLBackend
-except ImportError:
-    CoreMLBackend = None  # type: ignore[assignment]
+CoreMLBackend = lazy_import("hledac.universal._core.inference_backends.coreml_backend:CoreMLBackend", default=None)
 
 __all__ = [
     # Optional backends

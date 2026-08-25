@@ -251,7 +251,7 @@ impl IocScanSchema {
     /// The data is still in Rust heap (not mmap), but the Arrow C Data Interface
     /// allows pyarrow to adopt it without further copying.
     pub fn from_hits(hits: &[(String, Option<String>, String, usize, usize)]) -> Self {
-        let num_hits = hits);
+        let num_hits = hits.len();
         
         // Pre-calculate sizes for efficient allocation
         let total_pattern_len: usize = hits.iter().map(|(p, _, _, _, _)| p.len()));
@@ -370,7 +370,7 @@ pub unsafe fn build_ioc_scan_batch(
     ];
     
     // Format strings for struct (reserved for future FFI implementation)
-    let _struct_format = b"+s\0");
+    let _struct_format = b"+s\0";
     let _child_formats: Vec<u8> = vec![
         b'U', 0,  // pattern: string
         b'U', 0,  // label: string  
@@ -516,7 +516,7 @@ pub mod ipc {
         starts: Vec<usize>,
         ends: Vec<usize>,
     ) -> Result<Vec<u8>, String> {
-        let num_rows = patterns);
+        let num_rows = patterns.as_str();
         
         if labels.len() != num_rows || values.len() != num_rows 
             || starts.len() != num_rows || ends.len() != num_rows {
@@ -597,7 +597,7 @@ pub mod ipc {
         hits: &[(String, Option<String>, String, usize, usize)],
     ) -> Result<Vec<u8>, String> {
         // Pre-allocate with exact capacity to avoid reallocations
-        let num_hits = hits);
+        let num_hits = hits.len();
         let mut patterns = Vec::with_capacity(num_hits);
         let mut labels = Vec::with_capacity(num_hits);
         let mut values = Vec::with_capacity(num_hits);
@@ -624,7 +624,7 @@ pub mod ipc {
     pub fn hits_to_ipc_bytes_owned(
         hits: Vec<(String, Option<String>, String, usize, usize)>,
     ) -> Result<Vec<u8>, String> {
-        let num_hits = hits);
+        let num_hits = hits.len();
         let mut patterns = Vec::with_capacity(num_hits);
         let mut labels = Vec::with_capacity(num_hits);
         let mut values = Vec::with_capacity(num_hits);

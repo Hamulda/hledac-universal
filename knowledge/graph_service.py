@@ -61,9 +61,15 @@ except ImportError:
     except ImportError:
         rust = None
 
+# ISSUE #4: IOC Graph dispatch — lazy import to avoid M1 crash
+def _get_feature_flags():
+    from hledac.universal._core.feature_flags import FeatureFlags
+    return FeatureFlags
 
 def _get_rust_backend():
+
     """Lazy getter for Rust backend."""
+    return rust
     return rust
 
 
@@ -132,7 +138,12 @@ class GraphService:
     Use this class directly for test isolation or cross-sprint tenant isolation.
     """
 
-    __slots__ = ("_seen_iocs", "_seen_rels", "_relationship_callbacks")  # _duckpgq_graph NOT stored (uses _get_graph)
+    __slots__ = (
+        "_seen_iocs",
+        "_seen_rels",
+        "_relationship_callbacks",
+        "_bg_tasks",  # M-2026-FIX: tracked orphan-task set (was leaked previously)
+    )  # _duckpgq_graph NOT stored (uses _get_graph)
 
     def __init__(self) -> None:
         if _RUST_IOC_DEDUP_AVAILABLE:
@@ -143,10 +154,31 @@ class GraphService:
             self._seen_iocs = set()  # type: ignore[assignment]
             self._seen_rels = set()  # type: ignore[assignment]
         self._relationship_callbacks: list[Callable] = []
+        # M-2026-FIX: bounded background task set for LanceDB fire-and-forget
+        # upserts. Each task is removed via add_done_callback on completion,
+        # so memory stays bounded under any load.
+        self._bg_tasks: set[asyncio.Task] = set()
 
     def register_relationship_callback(self, fn: Callable[..., None]) -> None:
         """Register callback for relationship events (src, dst, rel_type, weight)."""
         self._relationship_callbacks.append(fn)
+
+    async def aclose(self) -> None:
+        """M-2026-FIX: drain + cancel background tasks on shutdown.
+
+        Called by orchestration shutdown sequence to avoid orphan asyncio.Task
+        warnings at interpreter exit (PEP 3156). Awaits pending tasks with a
+        bounded grace period before cancelling.
+        """
+        if not self._bg_tasks:
+            return
+        pending = list(self._bg_tasks)
+        for task in pending:
+            task.cancel()
+        # Allow any in-flight tasks to settle (broken handlers won't block exit
+        # because cancel() above makes them raise CancelledError on next await).
+        await asyncio.gather(*pending, return_exceptions=True)
+        self._bg_tasks.clear()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -188,12 +220,39 @@ class GraphService:
         if ioc_type not in _VALID_IOC_TYPES:
             logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, routing to 'pending'")
             ioc_type = "pending"
+        if ioc_type not in _VALID_IOC_TYPES:
+            logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, routing to 'pending'")
+            ioc_type = "pending"
+
+        # ISSUE #4: Dual-engine dispatch based on HLEDAC_ENABLE_IOC_GRAPH flag
+        # IOC_GRAPH=1 → IOCGraph (Kuzu Python), IOC_GRAPH=0 → DuckPGQGraph (DuckDB)
+        from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
+        try:
+            _ioc_graph_enabled = _get_feature_flags().get(FeatureFlag.IOC_GRAPH)
+        except Exception:
+            _ioc_graph_enabled = False  # Fail-safe: default to DuckPGQGraph
 
         graph = _get_graph()
         if graph is None:
             return False
         try:
-            row_id = graph.add_ioc(value, ioc_type, confidence, source, observed_at=_ts)
+            if _ioc_graph_enabled:
+                # ISSUE #4: Route to IOCGraph (Kuzu Python) via _upsert_ioc_python_impl
+                # Fresh event loop in thread to avoid M1 nested loop crash
+                def _run_ioc_graph_async():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        return loop.run_until_complete(
+                            graph._upsert_ioc_python_impl(ioc_type, value, confidence, _ts)
+                        )
+                    finally:
+                        loop.close()
+                row_id = _run_ioc_graph_async()
+            else:
+                # ISSUE #4: Route to DuckPGQGraph (DuckDB) via _upsert_ioc_duckpgq_impl
+                row_id = graph._upsert_ioc_duckpgq_impl(value, ioc_type, confidence, source, observed_at=_ts)
             if row_id is not None:
                 if _RUST_IOC_DEDUP_AVAILABLE:
                     self._seen_iocs.add(value, ioc_type)
@@ -205,6 +264,8 @@ class GraphService:
                 # no loop is running (sync context) — we catch that and skip
                 # the fire-and-forget LanceDB upsert. This eliminates the nested
                 # event loop crash (RuntimeError: loop is already running) in Python 3.10+.
+                # M-2026-FIX: tasks are now tracked in self._bg_tasks with
+                # add_done_callback-based cleanup so they don't orphan at exit.
                 try:
                     running_loop = asyncio.get_running_loop()
                 except RuntimeError:  # noqa: BLE001
@@ -213,7 +274,11 @@ class GraphService:
                     pass
                 else:
                     try:
-                        _ = running_loop.create_task(self._upsert_lancedb_entity_async(value, ioc_type))
+                        task = running_loop.create_task(
+                            self._upsert_lancedb_entity_async(value, ioc_type)
+                        )
+                        self._bg_tasks.add(task)
+                        task.add_done_callback(self._bg_tasks.discard)
                     except Exception as _e:
                         logger.debug(f"[GraphService] LanceDB entity upsert skipped: {_e}")
 
@@ -410,7 +475,10 @@ class GraphService:
                             pass
                         else:
                             try:
-                                _ = running_loop.create_task(result)
+                                task = running_loop.create_task(result)
+                                # M-2026-FIX: track tasks to avoid orphan warnings.
+                                self._bg_tasks.add(task)
+                                task.add_done_callback(self._bg_tasks.discard)
                             except Exception as cb_e:
                                 logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
                 except Exception as cb_e:

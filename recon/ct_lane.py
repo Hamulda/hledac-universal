@@ -33,12 +33,10 @@ from compat.msgspec_gc_compat import Struct
 if TYPE_CHECKING:
     import httpx
 import httpx
+from hledac.universal.utils.optional_imports import lazy_import
 
 logger = logging.getLogger(__name__)
-try:
-    from hledac.universal.runtime.source_finding_bridge import MAX_BRIDGE_OUTPUT
-except ImportError:
-    MAX_BRIDGE_OUTPUT = 500
+MAX_BRIDGE_OUTPUT = lazy_import("hledac.universal.runtime.source_finding_bridge:MAX_BRIDGE_OUTPUT", default=None)
 _CT_RATE_LIMIT_S = 1.0
 
 

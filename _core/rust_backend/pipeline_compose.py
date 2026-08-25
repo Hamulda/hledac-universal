@@ -30,10 +30,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-
-
-def get_domain() -> "PipelineComposeDomain":
+def get_domain() -> PipelineComposeDomain:
     from hledac.universal.rust_extensions import hledac_rust_extensions as _ext
 
     _probe = getattr(_ext, "pipeline_map", None)

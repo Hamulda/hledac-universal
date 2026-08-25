@@ -340,21 +340,22 @@ def _build_appendix(handoff: Any) -> str:
 
 def _get_findings_with_iocs(store: Any, handoff: Any) -> list[dict]:
     """Fetch accepted findings with IOC nodes from store."""
+    if not hasattr(store, "async_query_recent_findings"):
+        return []
     try:
-        if hasattr(store, "async_query_recent_findings"):
-            try:
-                _asyncio.get_running_loop()
-            except RuntimeError:
-                return _asyncio.run(store.async_query_recent_findings(limit=1000))
-            else:
-                _running_loop = _asyncio.get_running_loop()
-                _query_future = _asyncio.run_coroutine_threadsafe(
-                    store.async_query_recent_findings(limit=1000), _running_loop
-                )
-                return _query_future.result()
-    except Exception:  # noqa: BLE001
-        pass
-    return []
+        loop = _asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop — safe to use run_sync_async (PEP 654, Python 3.11+).
+        # P1-1 FIX: Replaced _asyncio.run() with run_sync_async() from sync_bridge.
+        from hledac.universal.utils.sync_bridge import run_sync_async
+
+        return run_sync_async(store.async_query_recent_findings(limit=1000))
+    else:
+        # Running loop — use run_coroutine_threadsafe from the running loop.
+        future = _asyncio.run_coroutine_threadsafe(
+            store.async_query_recent_findings(limit=1000), loop
+        )
+        return future.result()
 
 
 def _get_graph_manager(store: Any, handoff: Any) -> Any:

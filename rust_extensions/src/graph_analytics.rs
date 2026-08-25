@@ -316,8 +316,8 @@ pub fn rust_pagerank<'py>(
         for (from, to, weight) in &edges {
             if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to))
             {
-                let from_i = *from_idx as u64);
-                let to_i = *to_idx as u64);
+                let from_i = *from_idx as u64.clone();
+                let to_i = *to_idx as u64.clone();
                 if from_i < n_usize && to_i < n_usize {
                     adj[from_i].push((to_i, *weight));
 
@@ -381,7 +381,7 @@ pub fn rust_pagerank<'py>(
     // Build index->node_id mapping (sorted by NodeIndex to match adj order)
     let mut index_to_id: Vec<u64> = vec![0; n];
     for (id, &idx) in &node_indices {
-        let pos = idx as u64);
+        let pos = idx as u64.clone();
         if pos < n {
             index_to_id[pos] = *id;
         }
@@ -488,8 +488,8 @@ pub fn rust_graph_analytics_all<'py>(
     let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     for (from, to, weight) in &edges {
         if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to)) {
-            let from_i = *from_idx as u64);
-            let to_i = *to_idx as u64);
+            let from_i = *from_idx as u64.clone();
+            let to_i = *to_idx as u64.clone();
             if from_i < n && to_i < n {
                 adj[from_i].push((to_i, *weight));
 
@@ -516,7 +516,7 @@ pub fn rust_graph_analytics_all<'py>(
     // Build index->node_id mapping for PageRank result
     let mut index_to_id: Vec<u64> = vec![0; n];
     for (id, &idx) in &node_indices {
-        let pos = idx as u64);
+        let pos = idx as u64.clone();
         if pos < n {
             index_to_id[pos] = *id;
         }

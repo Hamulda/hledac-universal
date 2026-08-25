@@ -41,6 +41,8 @@ def _init_cache_db() -> sqlite3.Connection:
     """Initialize SQLite cache database."""
     _ensure_cache_dir()
     conn = sqlite3.connect(str(CACHE_DB_PATH))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS jarm_cache (domain TEXT PRIMARY KEY, hash TEXT NOT NULL, ts INTEGER NOT NULL)"
     )

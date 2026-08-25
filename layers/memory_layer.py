@@ -267,10 +267,11 @@ class _MemoryStateManager:
         try:
             import psutil
 
-            memory = psutil.virtual_memory()
-            memory_used_mb = memory.used / (1024 * 1024)
-            memory_available_mb = memory.available / (1024 * 1024)
-            cpu_percent = psutil.cpu_percent(interval=0.1)
+            from hledac.universal.utils.sys_metrics import system_memory_sync
+            mem = system_memory_sync()
+            memory_used_mb = mem.used_gib * 1024
+            memory_available_mb = mem.available_gib * 1024
+            cpu_percent = psutil.cpu_percent(interval=0.0)
             temperature_c = await self._get_temperature()
             return SystemMetrics(
                 memory_used_mb=memory_used_mb,
@@ -992,10 +993,8 @@ class RAMDiskManager:
 
     def get_available_memory_mb(self) -> int:
         """Get available memory in MB"""
-        import psutil
-
-        memory = psutil.virtual_memory()
-        return int(memory.available / 1024 / 1024)
+        from hledac.universal.utils.sys_metrics import system_memory_sync
+        return int(system_memory_sync().available_gib * 1024)
 
     def calculate_optimal_size(self) -> int:
         """Calculate optimal RAM disk size based on available memory"""

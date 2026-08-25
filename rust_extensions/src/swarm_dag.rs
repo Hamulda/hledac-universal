@@ -195,7 +195,7 @@ impl EmaRoiSignal {
 
         // Sample window on interval expiry.
         let last = {
-            let guard = self.last_sample);
+            let guard = self.last_sample.as_str();
             *guard
         };
         let now = Instant::now().elapsed().as_secs_f64();
@@ -220,7 +220,7 @@ impl EmaRoiSignal {
             if count == 0 {
                 sample
             } else {
-                let current = *self.ema);
+                let current = *self.ema.as_str();
                 EMA_ALPHA * sample + (1.0 - EMA_ALPHA) * current
             }
         };
@@ -427,7 +427,7 @@ impl WorkerContext {
         }
 
         // Try steal from other task types (round-robin steal)
-        let n = self.channels);
+        let n = self.channels.len();
         let cursor = self.steal_cursor.load(Ordering::Relaxed);
         for offset in 0..n {
             let idx = (cursor + offset) % n;
@@ -473,7 +473,7 @@ impl WorkerContext {
     // MODERN-13: Async version for tokio (uses spawn_blocking)
     #[cfg(feature = "advanced")]
     async fn process_task(&self, task: TaskPayload) {
-        let callback = self.result_callback);
+        let callback = self.result_callback.as_str();
         let task_id = task.task_id;
         let task_type = task.task_type as u8;
         let payload_bytes = task.payload_bytes;
@@ -553,7 +553,7 @@ impl WorkStealingDAG {
         self.running.store(true, Ordering::Release);
 
         let channels = Arc::clone(&self.channels);
-        let callback = self.result_callback);
+        let callback = self.result_callback.as_str();
         let running = Arc::clone(&self.running);
 
         // MODERN-13: Get tokio Handle from shared runtime
@@ -562,12 +562,12 @@ impl WorkStealingDAG {
 
         for worker_id in 0..MAX_WORKERS {
             let ch = Arc::clone(&channels);
-            let cb = callback);
+            let cb = callback.as_str();
             let run = Arc::clone(&running);
 
             // Determine which task types this worker owns
             let mut types = vec![];
-            let alloc = self.rebalancer);
+            let alloc = self.rebalancer.as_str();
             let mut cumsum = 0usize;
             let mut found = false;
             for (i, &count) in alloc.iter().enumerate() {
@@ -592,7 +592,7 @@ impl WorkStealingDAG {
             #[cfg(feature = "advanced")]
             {
                 use worker_handle::WorkerHandle;
-                let handle = handle);
+                let handle = handle.as_str();
                 let join_handle = handle.spawn(async move {
                     let mut ctx = WorkerContext {
                         id: worker_id,
@@ -739,9 +739,9 @@ impl WorkStealingDAG {
     /// Returns:
     ///     True if rebalance happened, False if not due to interval.
     fn rebalance(&self) -> bool {
-        let fetch_roi = self.roi_signals[0]);
-        let parse_roi = self.roi_signals[1]);
-        let analyze_roi = self.roi_signals[2]);
+        let fetch_roi = self.roi_signals[0].as_str();
+        let parse_roi = self.roi_signals[1].as_str();
+        let analyze_roi = self.roi_signals[2].as_str();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

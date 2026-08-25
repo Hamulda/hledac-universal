@@ -74,12 +74,12 @@ class MatchStage:
             matched_pattern_counts = [0] * len(input_batch.urls)
             matched_pattern_labels: list[list[str]] = [[] for _ in input_batch.urls]
             errors = [None] * len(input_batch.urls)
-
             return MatchedBatch(
                 urls=input_batch.urls,
                 matched_pattern_counts=matched_pattern_counts,
                 matched_pattern_labels=matched_pattern_labels,
                 errors=errors,
+                iocs=[[] for _ in input_batch.urls],
             ), telemetry
 
         # Extract usable texts (preserved from FetchedBatch via ExtractStage)
@@ -149,14 +149,41 @@ class MatchStage:
         telemetry["simd_scanner_available"] = scanner_stats["available"]
         telemetry["simd_scanner_pattern_count"] = scanner_stats["pattern_count"]
         telemetry["simd_scanner_automaton_bytes"] = scanner_stats["automaton_bytes"]
-
+    
+        # Dual-engine IOC extraction (Rust regex + Brain NER) on usable pages.
+        from hledac.universal.hledac_types.canonical import CanonicalIOC
+        from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts_dual
+    
+        iocs_per_url: list[list[CanonicalIOC]] = [[] for _ in input_batch.urls]
+        telemetry["dual_engine_active"] = False
+        telemetry["rust_ioc_count"] = 0
+        telemetry["ner_ioc_count"] = 0
+        telemetry["canonical_ioc_count"] = 0
+        if usable_texts:
+            try:
+                page_iocs = await extract_iocs_from_texts_dual(usable_texts)
+                for slot, idx in enumerate(usable_indices_list):
+                    if 0 <= idx < len(iocs_per_url) and slot < len(page_iocs):
+                        iocs_per_url[idx] = page_iocs[slot]
+                telemetry["dual_engine_active"] = True
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"[match_stage] dual-engine IOC extraction failed: {exc}")
+        for page in iocs_per_url:
+            for ioc in page:
+                telemetry["canonical_ioc_count"] += 1
+                if ioc.source == "rust_regex":
+                    telemetry["rust_ioc_count"] += 1
+                elif ioc.source == "brain_ner":
+                    telemetry["ner_ioc_count"] += 1
+    
         batch = MatchedBatch(
             urls=input_batch.urls,
             matched_pattern_counts=matched_pattern_counts,
             matched_pattern_labels=matched_pattern_labels,
             errors=errors,
+            iocs=iocs_per_url,
         )
-
+    
         return batch, telemetry
 
     def _empty_batch(self) -> MatchedBatch:

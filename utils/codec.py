@@ -373,6 +373,62 @@ def decode_typed(raw: bytes, typ: type) -> object:
         return decode(raw)
 
 
+def encode_typed(obj: Any, typ: type) -> bytes:
+    """
+    Typed msgspec encode — serialize a dataclass/Struct/dict against a schema.
+
+    Faster and stricter than :func:`encode`; raises ``msgspec.ValidationError``
+    on schema mismatch (caller decides fallback). Use for knowledge/ records
+    (findings, IOC, evidence) where the schema is known.
+    """
+    return msgspec.json.encode(obj, type=typ)  # type: ignore[no-any-return]
+
+
+def json_load(fp: Any, *, strict: bool = True) -> Any:
+    """
+    Load JSON from a file-like object or path using the canonical codec.
+
+    Args:
+        fp: A path (``str``/``Path``) or an object with a ``read()`` method.
+        strict: If True (default), require valid UTF-8 JSON.
+
+    Returns:
+        Decoded Python object.
+    """
+    if hasattr(fp, "read"):
+        data = fp.read()
+    else:
+        with open(fp, encoding="utf-8") as fh:
+            data = fh.read()
+    return decode(data)
+
+
+def json_dump(
+    obj: Any,
+    fp: Any,
+    *,
+    indent: int | None = None,
+    sort_keys: bool = False,
+    ensure_ascii: bool = False,
+) -> None:
+    """
+    Dump JSON to a file-like object or path using the canonical codec.
+
+    Args:
+        obj: JSON-serializable object.
+        fp: A path (``str``/``Path``) or an object with a ``write()`` method.
+        indent: Pretty-print indent (2 recommended).
+        sort_keys: Canonical sorted keys.
+        ensure_ascii: Ignored by msgspec (always UTF-8).
+    """
+    text = encode_str(obj, indent=indent, sort_keys=sort_keys, ensure_ascii=ensure_ascii)
+    if hasattr(fp, "write"):
+        fp.write(text)
+    else:
+        with open(fp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+
 def encode_zstd(obj: Any, level: int = 3) -> bytes:
     """
     Encode + zstd-compress with 4-byte length prefix.
@@ -567,11 +623,14 @@ def decode_fast(data: bytes | str | bytearray) -> Any:
         return _stdlib_json.loads(data)  # type: ignore[no-any-return]
 
 
-json_dumps = encode
-"""Alias for :func:`encode` (legacy naming from shared memory serialization)."""
+json_dumps = encode_str
+"""Drop-in replacement for ``json.dumps`` — returns ``str`` (msgspec → orjson → stdlib)."""
+
+json_dumpsb = encode
+"""Bytes variant of :func:`json_dumps` (msgspec → orjson → stdlib), returns ``bytes``."""
 
 json_loads = decode
-"""Alias for :func:`decode` (legacy naming from shared memory serialization)."""
+"""Drop-in replacement for ``json.loads`` — accepts ``str``/``bytes``/``memoryview``."""
 
 dumps_str = encode_str
 """Alias for :func:`encode_str` (legacy naming from msgspec_json.py)."""
@@ -595,6 +654,10 @@ __all__ = [
     "encode_pretty_sorted",
     # Typed
     "decode_typed",
+    "encode_typed",
+    # File IO
+    "json_load",
+    "json_dump",
     # Zstd
     "encode_zstd",
     "decode_zstd",
@@ -614,6 +677,7 @@ __all__ = [
     "CacheEntry",
     # Legacy aliases
     "json_dumps",
+    "json_dumpsb",
     "json_loads",
     "dumps_str",
     "dumps",

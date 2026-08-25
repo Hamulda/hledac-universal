@@ -177,7 +177,10 @@ async def async_search_dht(
     try:
         candidates = _query_to_infohash_candidates(query, max_candidates=max_results)
         hits: list[DiscoveryHit] = []
-        seen_peers: set[tuple[str, int]] = set()
+        # M-2026-FIX: was unbounded set[tuple[str,int]]; converted to RBF with
+        # "ip\x00port" stringification (practically zero collision risk).
+        from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+        seen_peers: RotatingBloomFilter = RotatingBloomFilter(max_elements=50_000, error_rate=0.005)
 
         async with asyncio.timeout(timeout_s):
             # P1-02: Parallelizace přes parallel() — DHT get_peers je ~100-500ms, paralelně ~500ms místo 5-10s
@@ -208,9 +211,10 @@ async def async_search_dht(
             for peer_ip, peer_port, info_hash in all_peers:
                 if len(hits) >= max_results:
                     break
-                if (peer_ip, peer_port) in seen_peers:
+                peer_key = f"{peer_ip}\x00{peer_port}"
+                if peer_key in seen_peers:
                     continue
-                seen_peers.add((peer_ip, peer_port))
+                seen_peers.add(peer_key)
                 hit_url = f"bt://{peer_ip}:{peer_port}/{info_hash[:16]}"
                 hits.append(
                     DiscoveryHit(

@@ -372,7 +372,7 @@ class WinddownOrchestrator:
     async def _shutdown_entity_signal_extractor(self) -> None:
         """Shutdown entity_signal_extractor ThreadPoolExecutor."""
         try:
-            from hledac.universal.intel.entity_signal_extractor import reset_extractor_stats, shutdown_executor
+            from hledac.universal.recon.entity_signal_extractor import reset_extractor_stats, shutdown_executor
 
             shutdown_executor()
             reset_extractor_stats()

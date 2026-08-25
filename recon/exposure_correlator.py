@@ -93,19 +93,19 @@ class Asset(Struct):
 
     @property
     def has_bucket(self) -> bool:
-        return any((s.signal_type == SIGNAL_TYPE_OPEN_BUCKET for s in self.signals))
+        return any(s.signal_type == SIGNAL_TYPE_OPEN_BUCKET for s in self.signals)
 
     @property
     def has_cert(self) -> bool:
-        return any((s.signal_type == SIGNAL_TYPE_CT_CERT for s in self.signals))
+        return any(s.signal_type == SIGNAL_TYPE_CT_CERT for s in self.signals)
 
     @property
     def has_jarm(self) -> bool:
-        return any((s.signal_type == SIGNAL_TYPE_JARM for s in self.signals))
+        return any(s.signal_type == SIGNAL_TYPE_JARM for s in self.signals)
 
     @property
     def has_dns(self) -> bool:
-        return any((s.signal_type == SIGNAL_TYPE_PASSIVE_DNS for s in self.signals))
+        return any(s.signal_type == SIGNAL_TYPE_PASSIVE_DNS for s in self.signals)
 
 class ExposureFinding(Struct):
     """A correlated exposure finding with evidence."""
@@ -190,6 +190,7 @@ async def _detect_open_buckets_async(entity_name: str) -> list[dict]:
     """
     import asyncio
     try:
+        pass  # CORRUPTION: original try body lost; neutral fallback — review
     except Exception:
         return []
     candidates = _generate_bucket_candidates(entity_name)
@@ -325,7 +326,7 @@ def _is_generic_hosting_jarm(jarm_hash: str) -> bool:
     """
     if not jarm_hash or len(jarm_hash) != 62:
         return False
-    if any((jarm_hash.startswith(p) for p in _GENERIC_HOSTING_JARM_PREFIXES)):
+    if any(jarm_hash.startswith(p) for p in _GENERIC_HOSTING_JARM_PREFIXES):
         return True
     return False
 

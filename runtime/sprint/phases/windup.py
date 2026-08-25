@@ -48,8 +48,6 @@ from ..truth_logger import (
 # msgspec is imported lazily inside _scheduler_result_acquisition_payload
 # DuckDB is imported lazily in phase1_early via resource_governor
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 async def _windup_phase1_early(
@@ -730,7 +728,7 @@ async def _run_sprint_windup(
     )
 
 def _scheduler_result_acquisition_payload(
-    result: 'SprintSchedulerResult',  # type: ignore[name-defined] # Issue #9: type hint fix
+    result: SprintSchedulerResult,  # type: ignore[name-defined] # Issue #9: type hint fix
     scheduler: Any,
     query: str,
     duration_s: float,
@@ -945,7 +943,7 @@ def _scheduler_result_acquisition_payload(
             required_lane_plan=term_rep.get('required_lanes', []) if term_rep else [],
             runtime_attempted_lanes=[o.family for o in sfo_list if o.attempted and o.family],
             effective_acquisition_plan=list(set(term_rep.get('required_lanes', []) if term_rep else []) | {o.family for o in sfo_list if o.attempted and o.family}),
-            plan_semantics='effective_runtime' if any((o.attempted for o in sfo_list)) else 'prelude_only',
+            plan_semantics='effective_runtime' if any(o.attempted for o in sfo_list) else 'prelude_only',
         )
         _acq_report['acquisition_profile_input'] = None
         _acq_report['acquisition_profile_effective'] = acq_effective

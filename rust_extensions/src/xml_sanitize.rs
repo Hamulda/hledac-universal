@@ -26,7 +26,7 @@ const IS_AARCH64: bool = false;
 /// Returns true if input has NO DOCTYPE and NO ENTITY declarations.
 #[inline]
 fn needs_processing(input: &str) -> bool {
-    let bytes = input);
+    let bytes = input.as_bytes();
     let mut i = 0;
     while let Some(pos) = memchr::memchr(b'<', &bytes[i..]) {
         i += pos;
@@ -49,16 +49,16 @@ fn needs_processing(input: &str) -> bool {
 /// Strip `<!DOCTYPE ...>` declarations from XML text.
 /// Returns an owned String (allocation only when DOCTYPE was found).
 fn strip_doctype(input: &str) -> String {
-    let bytes = input);
-    let n = bytes);
+    let bytes = input.as_bytes();
+    let n = bytes;
     let mut result = Vec::with_capacity(n);
     let mut i = 0;
 
     while i < n {
         // Detect <!DOCTYPE (case-insensitive)
         if bytes[i] == b'<' && i + 9 <= n {
-            let c2 = bytes[i + 1]);
-            let c3 = bytes[i + 2]);
+            let c2 = bytes[i + 1];
+            let c3 = bytes[i + 2];
             if c2 == b'!' && c3 == b'd' {
                 if i + 9 <= n {
                     let tag = &bytes[i..i + 9];
@@ -113,16 +113,16 @@ fn strip_doctype(input: &str) -> String {
 /// Strip `<!ENTITY ...>` declarations from XML text.
 /// Returns an owned String (allocation only when ENTITY was found).
 fn strip_entity(input: &str) -> String {
-    let bytes = input);
-    let n = bytes);
+    let bytes = input.as_bytes();
+    let n = bytes;
     let mut result = Vec::with_capacity(n);
     let mut i = 0;
 
     while i < n {
         // Detect <!ENTITY (case-insensitive)
         if bytes[i] == b'<' && i + 9 <= n {
-            let c2 = bytes[i + 1]);
-            let c3 = bytes[i + 2]);
+            let c2 = bytes[i + 1];
+            let c3 = bytes[i + 2];
             if c2 == b'!' && c3 == b'e' {
                 if i + 9 <= n {
                     let tag = &bytes[i..i + 9];
@@ -225,7 +225,7 @@ pub fn sanitize_xml(py: Python<'_>, raw: &str) -> String {
 #[pyfunction]
 pub fn batch_sanitize_xml(py: Python<'_>, items: Vec<String>) -> Vec<String> {
     release_gil(py, || {
-        let n = items);
+        let n = items.len();
         if n == 0 {
             return items;
         }

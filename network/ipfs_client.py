@@ -249,8 +249,9 @@ async def fetch_directory_recursive(
     Returns:
         List of dicts with keys: {cid, path, size, type}
     """
+    from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
     if seen_cids is None:
-        seen_cids = set()
+        seen_cids = make_url_dedup(capacity=10_000)
     if current_depth > max_depth:
         return []
     if cid in seen_cids:
@@ -504,8 +505,9 @@ async def find_via_ipfs_search(query: str) -> list[str]:
     Returns:
         List of CIDs matching the query.
     """
+    from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
     cids: list[str] = []
-    seen: set[str] = set()
+    seen = make_url_dedup(capacity=10_000)
     try:
         client_timeout = httpx.Timeout(IPFS_SEARCH_TIMEOUT)
         host = _host_from_url(IPFS_SEARCH_GATEWAY)
@@ -542,8 +544,9 @@ async def search_via_estuary(query: str) -> list[str]:
     Returns:
         List of CIDs matching the query.
     """
+    from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
     cids: list[str] = []
-    seen: set[str] = set()
+    seen = make_url_dedup(capacity=10_000)
     ESTUARY_SEARCH: str = "https://api.estuary.tech/public/search"
     try:
         client_timeout = httpx.Timeout(IPFS_SEARCH_TIMEOUT)
@@ -715,8 +718,9 @@ async def search_ipfs(query: str) -> list[str]:
     Returns:
         List of IPFS CIDs (as strings) found for the query.
     """
+    from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
     cids: list[str] = []
-    seen: set[str] = set()
+    seen = make_url_dedup(capacity=10_000)
     try:
         from hledac.universal.deep_probe import scan_ipfs
 

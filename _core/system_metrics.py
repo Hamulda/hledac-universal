@@ -412,7 +412,10 @@ def get_system_snapshot() -> SystemSnapshot:
             used_bytes = total_bytes - (free_pages * 4096)
             memory_percent = (used_bytes / total_bytes * 100) if total_bytes > 0 else 0.0
             memory_used_gb = used_bytes / (1024**3)
-            memory_available_gb = (free_pages * 4096) / (1024**3)
+            # Available ≈ free + inactive (reclaimable) pages, not free alone.
+            # Using free-only undercounts badly on macOS (free is usually tiny)
+            # and forces false CRITICAL pressure → constant eviction/thrashing.
+            memory_available_gb = ((free_pages + inactive_pages) * 4096) / (1024**3)
             # Derive pressure status from mach counts (mach success path)
             free_pct = int(free_pages / total_pages * 100)
             wired_pct = int(wire_pages / total_pages * 100)

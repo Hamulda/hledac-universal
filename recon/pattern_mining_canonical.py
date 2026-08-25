@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import Any
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.optional_imports import lazy_import
 
 # orjson fallback — 5-10× faster than stdlib json, M1 optimized
 try:
@@ -75,10 +76,7 @@ except ImportError:
     Event = None
     Action = None
     create_pattern_mining_engine = None
-try:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-except ImportError:
-    CanonicalFinding = None
+CanonicalFinding = lazy_import("hledac.universal.knowledge.duckdb_store:CanonicalFinding", default=None)
 
 
 class PatternCandidate(Struct):

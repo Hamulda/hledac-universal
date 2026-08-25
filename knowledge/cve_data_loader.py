@@ -291,7 +291,14 @@ async def _fetch_nvd_page(
         "startIndex": start_idx,
         "resultsPerPage": results_per_page,
     }
-    resp = await client.get(_NVD_API_BASE, params=params, timeout=60.0)
+    # ISSUE #8: Accept header moved from the (now pooled, shared) client to the
+    # request, so NVD-specific headers do not leak to other clearnet consumers.
+    resp = await client.get(
+        _NVD_API_BASE,
+        params=params,
+        timeout=60.0,
+        headers={"Accept": "application/json"},
+    )
     resp.raise_for_status()
     await asyncio.sleep(_RATE_LIMIT_MS / 1000)
     return resp.json()
@@ -306,72 +313,77 @@ async def _fetch_all_nvd_cves(
     all_cves: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
 
-    async with httpx.AsyncClient(headers={"Accept": "application/json"}) as client:
-        start_idx = 0
-        page = 0
-        while True:
-            try:
-                data = await _fetch_nvd_page(client, start_idx)
-                vulnerabilities = data.get("vulnerabilities", [])
-                if not vulnerabilities:
-                    break
+    # ISSUE #8: pooled client. NVD pagination is hundreds of sequential requests
+    # to the same host — a shared keep-alive/H2 connection is the single biggest
+    # win here, and it survives across repeated loader invocations.
+    from hledac.universal.transport.client_pool import get_or_create_httpx_client
 
-                for vuln in vulnerabilities:
-                    parsed = _parse_nvd_cve(vuln)
-                    if not parsed:
-                        continue
-
-                    # Filter by technology
-                    tech_matches = []
-                    for tech in technologies:
-                        cpe_prefix = _tech_cpe_prefix(tech)
-                        if any(cpe_prefix.lower() in vp.lower() for vp in parsed.get("version_patterns", {})):
-                            tech_matches.append(tech)
-
-                    if not tech_matches:
-                        continue
-
-                    # Filter by CVSS
-                    if parsed["cvss_score"] and parsed["cvss_score"] < min_cvss:
-                        continue
-
-                    if parsed["cve_id"] in seen_ids:
-                        continue
-                    seen_ids.add(parsed["cve_id"])
-
-                    for tech in tech_matches:
-                        cve_record = {
-                            "cve_id": parsed["cve_id"],
-                            "technology": tech,
-                            "version_pattern": parsed["version_patterns"].get(_tech_cpe_prefix(tech)),
-                            "cvss_score": parsed["cvss_score"],
-                            "cwe_id": parsed["cwe_id"],
-                            "description_snippet": parsed["description"],
-                            "published_date": parsed["published_date"],
-                        }
-                        all_cves.append(cve_record)
-
-                total = data.get("totalResults", 0)
-                logger.info(
-                    f"[CVE Loader] Fetched page {page}, {len(all_cves)} CVEs so far (of ~{min(total, max_records or float('inf'))})"
-                )
-
-                if len(all_cves) >= (max_records or float("inf")):
-                    break
-
-                start_idx += 100
-                page += 1
-
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 403:
-                    logger.warning("[CVE Loader] Rate limited by NVD, waiting 30s...")
-                    await asyncio.sleep(30)
-                    continue
-                raise
-
-            except Exception as e:
-                logger.error(f"[CVE Loader] Error: {e}")
+    client = await get_or_create_httpx_client("clearnet")
+    start_idx = 0
+    page = 0
+    while True:
+        try:
+            data = await _fetch_nvd_page(client, start_idx)
+            vulnerabilities = data.get("vulnerabilities", [])
+            if not vulnerabilities:
                 break
+
+            for vuln in vulnerabilities:
+                parsed = _parse_nvd_cve(vuln)
+                if not parsed:
+                    continue
+
+                # Filter by technology
+                tech_matches = []
+                for tech in technologies:
+                    cpe_prefix = _tech_cpe_prefix(tech)
+                    if any(cpe_prefix.lower() in vp.lower() for vp in parsed.get("version_patterns", {})):
+                        tech_matches.append(tech)
+
+                if not tech_matches:
+                    continue
+
+                # Filter by CVSS
+                if parsed["cvss_score"] and parsed["cvss_score"] < min_cvss:
+                    continue
+
+                if parsed["cve_id"] in seen_ids:
+                    continue
+                seen_ids.add(parsed["cve_id"])
+
+                for tech in tech_matches:
+                    cve_record = {
+                        "cve_id": parsed["cve_id"],
+                        "technology": tech,
+                        "version_pattern": parsed["version_patterns"].get(_tech_cpe_prefix(tech)),
+                        "cvss_score": parsed["cvss_score"],
+                        "cwe_id": parsed["cwe_id"],
+                        "description_snippet": parsed["description"],
+                        "published_date": parsed["published_date"],
+                    }
+                    all_cves.append(cve_record)
+
+            total = data.get("totalResults", 0)
+            logger.info(
+                f"[CVE Loader] Fetched page {page}, {len(all_cves)} CVEs so far (of ~{min(total, max_records or float('inf'))})"
+            )
+
+            if len(all_cves) >= (max_records or float("inf")):
+                break
+
+            start_idx += 100
+            page += 1
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                logger.warning("[CVE Loader] Rate limited by NVD, waiting 30s...")
+                await asyncio.sleep(30)
+                continue
+            raise
+
+        except Exception as e:
+            logger.error(f"[CVE Loader] Error: {e}")
+            break
 
     return all_cves[:max_records]
 

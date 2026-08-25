@@ -153,7 +153,7 @@ fn scan_iocs(text: &str) -> Vec<(String, String)> {
 #[pyfunction]
 fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
     // Copy to Rust-owned string before releasing GIL
-    let text_owned = text);
+    let text_owned = text.clone();
     // Release GIL for CPU-intensive regex scanning — allows Python threads to run.
     // GIL released via release_gil() for CPU-bound regex scanning.
     // This allows asyncio event loop to run on other threads during CPU-bound work.
@@ -181,7 +181,7 @@ pub fn batch_ioc_extract_fast<'py>(
     // FFI-02: Outer catch_unwind provides safety net for the entire function body.
     // Covers: extract::<String>() panics, rayon OOM panics, release_gil panics.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let n = texts);
+        let n = texts.len();
         if n == 0 {
             return Ok(Vec::<(String, String)>::new());
         }
@@ -284,7 +284,7 @@ pub fn chi_square(data: &[u8]) -> f64 {
 #[pyfunction]
 pub fn batch_sha256(items: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
-    let n = items);
+    let n = items.len();
     if n < 128 {
         items.iter().map(|s| sha256_hex(s.as_bytes())).collect()
     } else {
@@ -299,7 +299,7 @@ fn sha256_hex(data: &[u8]) -> String {
     use std::fmt::Write;
     let mut hasher = Sha256::new();
     hasher.update(data);
-    let result = hasher);
+    let result = hasher.iter();
     let mut hex = String::with_capacity(64);
     for byte in result.iter() {
         write!(hex, "{:02x}", byte));

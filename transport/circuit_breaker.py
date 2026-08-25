@@ -207,7 +207,7 @@ class DomainCircuitBreaker:
     def __init__(self, domain: str) -> None:
         self.domain = domain
         self._rust_cb: dict | None = None
-        self._python_cb: "CircuitBreaker | None" = None
+        self._python_cb: CircuitBreaker | None = None
 
     def _get_rust_cb(self) -> dict | None:
         """Delegate to module-level _get_rust_cb() singleton.
@@ -220,7 +220,7 @@ class DomainCircuitBreaker:
         cb = _get_rust_cb()
         return cb if cb else None
 
-    def _get_python_cb(self) -> "CircuitBreaker":
+    def _get_python_cb(self) -> CircuitBreaker:
         """Lazy load Python fallback CircuitBreaker from canonical registry.
 
         Uses get_breaker() to ensure the same CircuitBreaker instance is
@@ -504,7 +504,7 @@ class CircuitDecision(Struct, frozen=True, kw_only=True):
     reason: str
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class CircuitBreaker:
     """Domain-based circuit breaker for transport layer.
 
@@ -878,7 +878,7 @@ class DomainCircuitBreakerRegistry:
     __slots__ = ()
 
     @staticmethod
-    def get(domain: str) -> "CircuitBreaker | None":
+    def get(domain: str) -> CircuitBreaker | None:
         """Return CircuitBreaker for domain from canonical registry.
 
         Returns None only if domain is empty.
@@ -894,7 +894,7 @@ class DomainCircuitBreakerRegistry:
 # =============================================================================
 
 
-_MODEL_BREAKERS: dict[str, "ModelCircuitBreaker"] = {}
+_MODEL_BREAKERS: dict[str, ModelCircuitBreaker] = {}
 _model_breakers_lock = threading.Lock()
 register_lock(LockCategory.NETWORK, _model_breakers_lock, "circuit_breaker._model_breakers_lock")
 
@@ -908,7 +908,7 @@ class ModelCircuitBreakerRegistry:
     __slots__ = ()
 
     @staticmethod
-    def get(model_id: str) -> "ModelCircuitBreaker":
+    def get(model_id: str) -> ModelCircuitBreaker:
         """Return ModelCircuitBreaker for model_id (creates if needed)."""
         with _model_breakers_lock:
             if model_id not in _MODEL_BREAKERS:
@@ -916,7 +916,7 @@ class ModelCircuitBreakerRegistry:
             return _MODEL_BREAKERS[model_id]
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class ModelCircuitBreaker:
     """Per-model inference failure circuit breaker.
 

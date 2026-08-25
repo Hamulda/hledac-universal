@@ -620,11 +620,11 @@ def is_flag_active(name: str) -> bool:
     """
     try:
         raw = os.environ.get(name, "0")
-        except (AttributeError, TypeError):
+    except (AttributeError, TypeError):
         return False
     try:
         return raw.strip().lower() in _TRUTHY
-        except (AttributeError, TypeError):
+    except (AttributeError, TypeError):
         return False
 
 
@@ -642,11 +642,11 @@ def is_enabled(name: str, default: str = "0") -> bool:
     """
     try:
         raw = os.environ.get(name, default)
-        except (AttributeError, TypeError):
+    except (AttributeError, TypeError):
         return False
     try:
         return raw.strip().lower() in _TRUTHY
-        except (AttributeError, TypeError):
+    except (AttributeError, TypeError):
         return False
 
 

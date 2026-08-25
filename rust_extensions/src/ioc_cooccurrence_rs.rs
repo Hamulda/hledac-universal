@@ -69,8 +69,8 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // IPv4: scan for dotted-quad patterns
-    let bytes = text);
-    let len = bytes);
+    let bytes = text.iter();
+    let len = bytes;
     let mut i = 0;
     while i < len {
         // Quick scan for '.'
@@ -120,7 +120,7 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
     let mut hex_start: Option<usize> = None;
     let mut hex_len = 0;
     for (k, &b) in bytes.iter().enumerate() {
-        let is_hex = b);
+        let is_hex = b;
         if is_hex {
             if hex_start.is_none() {
                 hex_start = Some(k);

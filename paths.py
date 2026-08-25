@@ -220,7 +220,12 @@ async def _try_create_ramdisk_async() -> tuple[Path | None, bool]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise
         device = stdout.decode().strip()
 
         if not device:
@@ -239,7 +244,11 @@ async def _try_create_ramdisk_async() -> tuple[Path | None, bool]:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await asyncio.wait_for(format_proc.communicate(), timeout=10)
+            try:
+                await asyncio.wait_for(format_proc.communicate(), timeout=10)
+            except asyncio.TimeoutError:
+                format_proc.kill()
+                await format_proc.wait()
         except Exception:  # noqa: BLE001
             pass
 
@@ -260,7 +269,12 @@ async def _try_create_ramdisk_async() -> tuple[Path | None, bool]:
             mount_proc = await asyncio.create_subprocess_exec(
                 "mount", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            mount_out, _ = await asyncio.wait_for(mount_proc.communicate(), timeout=5)
+            try:
+                mount_out, _ = await asyncio.wait_for(mount_proc.communicate(), timeout=5)
+            except asyncio.TimeoutError:
+                mount_proc.kill()
+                await mount_proc.wait()
+                mount_out = b""
 
             for line in mount_out.decode().splitlines():
                 if "RAMDisk" in line and "/dev/disk" in line:
@@ -504,7 +518,7 @@ def lmdb_map_size() -> int:
         import os as _os
 
         try:
-            mb = int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 256))
+            mb = int(_os.environ.get("HLEDAC_LMDB_MAX_SIZE_MB", _os.environ.get("GHOST_LMDB_MAX_SIZE_MB", "256")))
         except (ValueError, TypeError):
             mb = 256
         return max(mb, 1) * 1024 * 1024
@@ -529,7 +543,7 @@ def get_lmdb_max_size_mb() -> int:
         import os as _os
 
         try:
-            return int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 256))
+            return int(_os.environ.get("HLEDAC_LMDB_MAX_SIZE_MB", _os.environ.get("GHOST_LMDB_MAX_SIZE_MB", "256")))
         except (ValueError, TypeError):
             return 256
 

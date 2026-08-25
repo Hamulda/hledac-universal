@@ -512,7 +512,7 @@ class CTSlicingEngine:
                 watch_domains=self._watch_domains, ioc_graph=self._ioc_graph
             )
             await self._certstream_client.start()
-            self._monitor_task = asyncio.create_task(self._monitor_loop(), name="ct_slicing:monitor")
+            self._monitor_task = safe_create_task(self._monitor_loop(), name="ct_slicing:monitor")
             logger.info(f"[CT] Started live monitoring for {len(self._watch_domains)} domains")
         except ImportError:
             logger.error("[CT] certstream_client not available")

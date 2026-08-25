@@ -359,14 +359,23 @@ class BGEM3Embedder:
         def _encode():
             import mlx.core as mx
 
-            inputs = self._tokenizer(
-                texts, padding=True, truncation=True, max_length=self._config.max_seq_len, return_tensors="mlx"
-            )
-            outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
-            attention_mask = mx.expand_dims(inputs.attention_mask, axis=-1)
-            hidden = outputs.last_hidden_state
-            pooled = (hidden * attention_mask).sum(axis=1) / attention_mask.sum(axis=1)
-            return np.array(pooled, dtype=np.float32)
+            # M1 8GB: bound peak memory by embedding in batches of batch_size
+            # instead of materializing the full sequence batch at once (OOM guard).
+            batch_size = int(getattr(self._config, "batch_size", 1)) or 1
+            pooled_chunks: list[np.ndarray] = []
+            for i in range(0, len(texts), batch_size):
+                chunk = texts[i : i + batch_size]
+                inputs = self._tokenizer(
+                    chunk, padding=True, truncation=True, max_length=self._config.max_seq_len, return_tensors="mlx"
+                )
+                outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
+                attention_mask = mx.expand_dims(inputs.attention_mask, axis=-1)
+                hidden = outputs.last_hidden_state
+                pooled = (hidden * attention_mask).sum(axis=1) / attention_mask.sum(axis=1)
+                pooled_chunks.append(np.array(pooled, dtype=np.float32))
+            if not pooled_chunks:
+                return np.empty((0, self._config.mrl_target_dim), dtype=np.float32)
+            return np.concatenate(pooled_chunks, axis=0)
 
         return await loop.run_in_executor(None, _encode)
 
@@ -402,6 +411,9 @@ class BGEM3Embedder:
         try:
             import mlx.core as mx
 
+            # INVARIANT #2: mx.eval([]) barrier BEFORE clear_cache(),
+            # otherwise clear_cache() is a no-op on M1 unified memory.
+            mx.eval([])
             mx.metal.clear_cache()
         except (ImportError, AttributeError):
             pass

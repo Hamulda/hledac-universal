@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hledac.universal.intel.relationship_discovery import LSHLinkPredictor
+from hledac.universal.recon.relationship_discovery import LSHLinkPredictor
 from hledac.universal.recon.document_intelligence import StegdetectServer
 from hledac.universal.tools.lightpanda_manager import LightpandaManager
 from hledac.universal.tools.lightpanda_pool import LightpandaPool

@@ -21,6 +21,8 @@ fetch network — it only emits a bounded plan dict per lane. See
 import asyncio
 import logging
 import re
+
+_IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -31,10 +33,7 @@ from compat.msgspec_gc_compat import Struct
 from hledac.universal.network.session_runtime import async_get_httpx_session
 
 logger = logging.getLogger(__name__)
-try:
-    from hledac.universal.utils.source_types import SourceType as _SourceType
-except ImportError:
-    _SourceType = None
+_SourceType = lazy_import("hledac.universal.utils.source_types:SourceType", default=None)
 SourceType = _SourceType  # pyright: ignore[invalid-assignment]
 from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (
@@ -729,6 +728,7 @@ class SourceFamilyOutcome(Struct, frozen=True):
 
 # normalize_source_family_name imported from utils._patterns
 from hledac.universal.utils._patterns import normalize_source_family_name
+from hledac.universal.utils.optional_imports import lazy_import
 
 _TERMINAL_PRIORITY = {
     "ATTEMPTED_ACCEPTED": 0,
@@ -1945,7 +1945,7 @@ async def run_enabled_acquisition_lanes(
         rejected_count = 0
         sample_rejections: tuple = ()
         try:
-            from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner as _WDM
+            from hledac.universal.recon.wayback_diff_miner import WaybackDiffMiner as _WDM
 
             if not callable(_WDM):
                 raise ImportError("WaybackDiffMiner not callable")
@@ -2162,7 +2162,7 @@ async def run_enabled_acquisition_lanes(
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.academic_search import AcademicSearchEngine, SearchResult
+                from hledac.universal.recon.academic_search import AcademicSearchEngine, SearchResult
                 from hledac.universal.runtime.source_finding_bridge import academic_results_to_findings
 
                 engine = AcademicSearchEngine(enable_expansion=False)
@@ -2465,7 +2465,7 @@ async def run_enabled_acquisition_lanes(
             )
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.doh_lane import DOHAdapter
+                from hledac.universal.recon.doh_lane import DOHAdapter
                 from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
 
                 adapter = DOHAdapter()
@@ -2946,7 +2946,7 @@ async def run_enabled_acquisition_lanes_streaming(
             start = time.monotonic()
             try:
                 async with _asyncio.timeout(plan.timeout_s):
-                    from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
+                    from hledac.universal.recon.wayback_diff_miner import WaybackDiffMiner
 
                     shaped_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_context)
                     shaped_query_str = shaped_query if isinstance(shaped_query, str) else query
@@ -3439,7 +3439,7 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
 
 def _extract_ips_from_query(query: str) -> list[str]:
     """Extract IP address strings from query."""
-    ip_pattern = re.compile("\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b")
+    ip_pattern = _IP_RE
     return ip_pattern.findall(query)
 
 

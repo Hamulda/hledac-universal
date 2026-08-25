@@ -19,8 +19,6 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-
 ACQUISITION_KEYS = (
     "public_terminal_stage", "public_discovered", "public_accepted_findings",
     "public_error", "public_discovery_empty_reason", "public_discovery_debug_reason",

@@ -23,6 +23,11 @@ import logging
 import multiprocessing as mp
 import os
 import re
+
+_RE_NUM_DOT = re.compile(r"\d+[\.,]\d+")
+_RE_BULLET = re.compile(r"^\s*[-*•]\s+", re.MULTILINE)
+_RE_CAPITALIZED = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b")
+_RE_TECH_TERM = re.compile(r"\b\w+(?:tion|ing|ed|ness|ment|ance|ity)\b")
 import tempfile
 import weakref
 import zipfile
@@ -1254,7 +1259,7 @@ class PDFAnalyzer:
                     return (page_num, 0, 0)
 
             # ISSUE-S3-FIX: Parallel sample page analysis
-            sample_tasks = [asyncio.create_task(_sample_page(idx)) for idx in sample_indices]
+            sample_tasks = [safe_create_task(_sample_page(idx)) for idx in sample_indices]
             sample_results = await asyncio.gather(*sample_tasks, return_exceptions=True)
 
             text_lengths = []
@@ -1287,7 +1292,7 @@ class PDFAnalyzer:
             page_scores: list[tuple[int, int]] = []
             for i in range(0, total_pages, _PAGE_SCORING_CONCURRENCY):
                 batch = range(i, min(i + _PAGE_SCORING_CONCURRENCY, total_pages))
-                batch_tasks = [asyncio.create_task(_score_page(p)) for p in batch]
+                batch_tasks = [safe_create_task(_score_page(p)) for p in batch]
                 batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
                 for result in batch_results:
                     if isinstance(result, Exception):
@@ -1391,7 +1396,7 @@ class PDFAnalyzer:
 
         for i in range(0, len(page_indices), _PARSER_CONCURRENCY):
             batch = page_indices[i : i + _PARSER_CONCURRENCY]
-            tasks = [asyncio.create_task(_parse_page(idx)) for idx in batch]
+            tasks = [safe_create_task(_parse_page(idx)) for idx in batch]
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in batch_results:
@@ -1608,7 +1613,7 @@ class PDFAnalyzer:
                         return None
 
                     # Parallel page sampling with bounded concurrency
-                    tasks = [asyncio.create_task(_sample_page(p)) for p in page_range]
+                    tasks = [safe_create_task(_sample_page(p)) for p in page_range]
                     results = await asyncio.gather(*tasks, return_exceptions=True)
                     for result in results:
                         if isinstance(result, dict):
@@ -1620,7 +1625,7 @@ class PDFAnalyzer:
                     return None
 
             # ISSUE-S3-FIX: Parallel OCG extraction with bounded concurrency
-            ocg_tasks = [asyncio.create_task(_extract_single_ocg(xref, ocg_info)) for xref, ocg_info in ocg_items]
+            ocg_tasks = [safe_create_task(_extract_single_ocg(xref, ocg_info)) for xref, ocg_info in ocg_items]
             results = await asyncio.gather(*ocg_tasks, return_exceptions=True)
 
             ocg_layers = []
@@ -1765,7 +1770,7 @@ class PDFAnalyzer:
                 if len(all_failures) >= MAX_FAILURES:
                     break
                 batch = range(i, min(i + _PAGE_CONCURRENCY, pages_to_check))
-                tasks = [asyncio.create_task(_check_page(p)) for p in batch]
+                tasks = [safe_create_task(_check_page(p)) for p in batch]
                 batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for result in batch_results:
@@ -1917,7 +1922,7 @@ class PDFAnalyzer:
                 if len(all_annots) >= MAX_ANNOTATIONS:
                     break
                 batch = range(i, min(i + _PAGE_CONCURRENCY, pages_to_check))
-                tasks = [asyncio.create_task(_check_page(p)) for p in batch]
+                tasks = [safe_create_task(_check_page(p)) for p in batch]
                 batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for result in batch_results:
@@ -3160,7 +3165,7 @@ class DocumentIntelligenceEngine:
             score += 0.1
         if re.search("\\d+[\\.,]\\d+", text):
             score += 0.1
-        if re.search("^\\s*[-*•]\\s+", text, re.MULTILINE):
+        if _RE_BULLET.search(text):
             score += 0.1
         if "cookie" in text_lower or "privacy policy" in text_lower:
             score -= 0.2
@@ -3195,7 +3200,18 @@ class DocumentIntelligenceEngine:
                     return float(scores[0].mean())
                 return None
             finally:
-                mm.release_model("modernbert")
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(mm.release_model("modernbert"))
+                except RuntimeError:
+                    # No running loop — release synchronously via the sync bridge.
+                    # asyncio.run() here is an M1 Metal crash vector (FINAL-019).
+                    try:
+                        from hledac.universal.utils.sync_bridge import run_sync_async
+
+                        run_sync_async(mm.release_model("modernbert"))
+                    except Exception:
+                        pass
         except Exception as e:
             logger.debug(f"Semantic scoring error: {e}")
             return None
@@ -3307,7 +3323,7 @@ class DocumentIntelligenceEngine:
         keywords = set()
         capitalized = re.findall("\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b", text)
         keywords.update([w.lower() for w in capitalized[:10]])
-        tech_terms = re.findall("\\b\\w+(?:tion|ing|ed|ness|ment|ance|ity)\\b", text.lower())
+        tech_terms = _RE_TECH_TERM.findall(text.lower())
         keywords.update(tech_terms[:10])
         return list(keywords)[:20]
 

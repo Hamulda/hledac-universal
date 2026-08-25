@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from ._sync import LRUCache
+from hledac.universal.utils.optional_imports import lazy_import
 
 logger = logging.getLogger(__name__)
 __all__ = [
@@ -67,16 +68,13 @@ __all__ = [
     "EvictionStrategy",
     "get_global_cache",
 ]
-try:
-    from utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
-except ImportError:
-    _MLX_AVAILABLE = False
+_MLX_AVAILABLE = lazy_import("hledac.universal.utils.mlx_memory:MLX_AVAILABLE", default=None)
 
 
 def _get_mlx() -> Any:
     """Lazy import MLX core - returns None if MLX not available."""
     try:
-        from utils.mlx_memory._core import get_mx as _get_mx_from_core
+        from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
 
         return _get_mx_from_core()
     except ImportError:
@@ -243,7 +241,7 @@ class _ARC:
 
 def safe_create_task(coro, *, name: str | None = None) -> asyncio.Task:
     """Create task with error handling."""
-    return asyncio.create_task(coro, name=name)
+    return safe_create_task(coro, name=name)
 
 
 async def safe_gather_fire_and_forget(*tasks: asyncio.Task, label: str = "") -> None:

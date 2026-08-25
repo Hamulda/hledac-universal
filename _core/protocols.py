@@ -39,7 +39,7 @@ KEPT: FindingProto, FindingWithPayloadProto, DuckDBStoreProtocol,
   GraphServiceProtocol, FetchCoordinatorProtocol (all have isinstance() checks).
 """
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeIs, runtime_checkable
 
 if TYPE_CHECKING:
     from typing import Any
@@ -205,26 +205,26 @@ def safe_get_uma_state(obj: Any, default: str = "ok") -> str:
     return state
 
 
-def is_finding(obj: Any) -> bool:
+def is_finding(obj: Any) -> TypeIs[FindingProto]:
     """Check if object satisfies FindingProto."""
     return isinstance(obj, FindingProto)
 
 
-def is_finding_with_payload(obj: Any) -> bool:
+def is_finding_with_payload(obj: Any) -> TypeIs[FindingWithPayloadProto]:
     """Check if object satisfies FindingWithPayloadProto."""
     return isinstance(obj, FindingWithPayloadProto)
 
 
-def is_store(obj: Any) -> bool:
+def is_store(obj: Any) -> TypeIs[DuckDBStoreProtocol]:
     """Check if object satisfies DuckDBStoreProtocol."""
     return isinstance(obj, DuckDBStoreProtocol)
 
 
-def is_graph_service(obj: Any) -> bool:
+def is_graph_service(obj: Any) -> TypeIs[GraphServiceProtocol]:
     """Check if object satisfies GraphServiceProtocol."""
     return isinstance(obj, GraphServiceProtocol)
 
 
-def is_fetch_coordinator(obj: Any) -> bool:
+def is_fetch_coordinator(obj: Any) -> TypeIs[FetchCoordinatorProtocol]:
     """Check if object satisfies FetchCoordinatorProtocol."""
     return isinstance(obj, FetchCoordinatorProtocol)

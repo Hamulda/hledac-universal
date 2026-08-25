@@ -378,9 +378,9 @@ class FederatedBridge:
             logger.debug("[FED-BRIDGE] open_lmdb not importable: %s", e)
             return
         try:
-            import orjson
+            import orjson as _json
         except Exception:
-            orjson = None
+            import json as _json
         try:
             data = self._qtable.to_dict()
             items = list(data.items())[:LMDB_MAX_ENTRIES]
@@ -389,12 +389,7 @@ class FederatedBridge:
             logger.debug("[FED-BRIDGE] to_dict failed: %s", e)
             return
         try:
-            if orjson is not None:
-                payload = orjson.dumps(bounded)
-            else:
-                import json as _json
-
-                payload = _json.dumps(bounded)
+            payload = _json.dumps(bounded)
         except Exception as e:
             logger.debug("[FED-BRIDGE] serialize failed: %s", e)
             return
@@ -431,9 +426,9 @@ class FederatedBridge:
         except Exception:
             return False
         try:
-            import orjson
+            import orjson as _json
         except Exception:
-            orjson = None
+            import json as _json
         env = None
         try:
             env = open_lmdb(_pathlib_path(self._lmdb_path), map_size=LMDB_MAP_SIZE_BYTES, readonly=True)
@@ -441,12 +436,7 @@ class FederatedBridge:
                 raw = txn.get(LMDB_PERSIST_KEY.encode("utf-8"))
             if raw is None:
                 return False
-            if orjson is not None:
-                data = orjson.loads(raw)
-            else:
-                import json as _json
-
-                data = _json.loads(raw)
+            data = _json.loads(raw)
             if not isinstance(data, dict):
                 return False
             restored = FederatedQTable.from_dict(data)

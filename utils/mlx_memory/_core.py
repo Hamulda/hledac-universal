@@ -34,9 +34,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from hledac.universal.utils.locks import LazyAsyncioLock
 
+from hledac.universal.utils.m1_resource import get_dynamic_metal_cache_limit as _dynamic_cache_factory
+
 from hledac.universal._core.locks import LockCategory, register_lock
 
 if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +152,7 @@ _METAL_CACHE_LIMIT_BYTES: int = int(1.5 * 1024 * 1024 * 1024)  # 1.5 GiB ceiling
 
 _EMERGENCY_FLOOR_BYTES: int = 256 * 1024 * 1024  # 256 MiB
 
-# For test surface
-_METAL_CACHE_LIMIT_BYTES = _METAL_CACHE_LIMIT_BYTES
-_METAL_WIRED_LIMIT_BYTES = _METAL_WIRED_LIMIT_BYTES
+
 
 # ── Internal State ─────────────────────────────────────────────────────────────
 
@@ -289,35 +290,18 @@ def _has_metal_api() -> bool:
     return mx is not None and hasattr(mx, "metal")
 
 
-def get_dynamic_metal_cache_limit() -> int:
+def get_dynamic_metal_cache_limit(
+    uma_state: str | None = None,
+    thermal_headroom: float = 1.0,
+) -> int:
     """
-    Dynamic Metal cache limit: 20% of available UMA, clamp [256MiB, 1.5GiB].
-    Called by init_mlx_buffers; not for direct use by callers.
+    Dynamic Metal cache limit — delegates to m1_resource factory.
 
-    P2-5 FIX: Previously used get_uma_usage_mb() which returns USED memory,
-    then incorrectly labeled it as available_gb. This caused the Metal cache
-    limit to INCREASE with memory pressure (inverted behavior).
-    Now correctly uses psutil.virtual_memory().available for true available memory.
-    Per GHOST_INVARIANTS.md: "Metal cache limit is dynamic (ceiling 1.5 GiB)"
-    with formula: min(max(available*0.2, 512MiB), 1.5GiB)
+    ISSUE #3 FIX: Previously held a hardcoded 256 MiB floor for all states,
+    ignoring uma_state. Now uses the canonical factory in utils.m1_resource
+    which correctly applies 512 MiB floor for normal / 256 MiB for emergency.
     """
-    try:
-        import psutil
-
-        # P2-5 FIX: Use psutil.virtual_memory().available, NOT get_uma_usage_mb()
-        # get_uma_usage_mb() returns USED memory (sys_used), but we need AVAILABLE
-        # memory to calculate the Metal cache limit correctly.
-        # As memory pressure increases (available ↓), the Metal cache should shrink.
-        vm = psutil.virtual_memory()
-        available_bytes = vm.available
-        available_gb = available_bytes / (1024 ** 3)
-
-        # 20% of available memory, clamped [256MiB, 1.5GiB]
-        raw = available_gb * 0.20
-        clamped = max(min(raw, 1.5), 0.25)
-        return int(clamped * 1024 * 1024 * 1024)
-    except Exception:
-        return int(1.0 * 1024 * 1024 * 1024)  # 1 GiB fallback
+    return _dynamic_cache_factory(uma_state=uma_state, thermal_headroom=thermal_headroom)
 
 
 def get_metal_limits_status() -> dict[str, Any]:

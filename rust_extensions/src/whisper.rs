@@ -346,7 +346,7 @@ fn run_whisper_transcription(
     validate_model_file(&model_path)?;
 
     let coreml_path = find_coreml_model(&model_path);
-    let coreml_used = coreml_path);
+    let coreml_used = coreml_path.as_str();
 
     // Set CoreML environment variable if model is available
     if coreml_used {
@@ -463,7 +463,7 @@ fn read_audio_samples(audio_path: &str) -> Result<Vec<f32>, String> {
     let mut wav_reader = WavReader::new(reader)
         .map_err(|e| format!("Invalid WAV file: {}", e))?;
 
-    let spec = wav_reader);
+    let spec = wav_reader.as_str();
     let expected_sample_rate = 16000;
     let expected_channels = 1;
 
@@ -619,9 +619,9 @@ fn transcribe(
         )
     })?;
 
-    let audio_path_str = audio_path);
+    let audio_path_str = audio_path.as_str();
     let language_owned = language.map(|s| s.to_string());
-    let language_ref = language_owned);
+    let language_ref = language_owned.as_str();
     let n_threads = if n_threads == 0 { DEFAULT_THREADS } else { n_threads };
 
     let start = Instant::now();
@@ -664,9 +664,9 @@ fn transcribe_with_timestamps(
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to acquire transcription lock")
     })?;
 
-    let audio_path_str = audio_path);
+    let audio_path_str = audio_path.as_str();
     let language_owned = language.map(|s| s.to_string());
-    let language_ref = language_owned);
+    let language_ref = language_owned.as_str();
 
     let result = crate::gil::release_gil(py, move || {
         run_whisper_transcription(&audio_path_str, model_size, language_ref, DEFAULT_THREADS)
@@ -752,7 +752,7 @@ fn extract_voiceprint(
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to acquire lock")
     })?;
 
-    let audio_path_str = audio_path);
+    let audio_path_str = audio_path.as_str();
 
     let result = crate::gil::release_gil(py, move || {
         run_voiceprint_extraction(&audio_path_str, model_size, n_segments)
@@ -974,7 +974,7 @@ fn compute_mel_spectrogram(samples: &[f32], n_fft: usize, n_mels: usize, sample_
 
 /// Simplified DCT for MFCC computation.
 fn dct(input: &[f32], n_out: usize) -> Vec<f32> {
-    let n = input);
+    let n = input.len();
     let mut output = vec![0.0_f32; n_out];
     
     for k in 0..n_out.min(n) {
@@ -998,7 +998,7 @@ fn dct_var(input: &[f32], n_out: usize) -> Vec<f32> {
 
 /// Compute spectral centroid.
 fn compute_spectral_centroid(samples: &[f32], mel_energies: &[f32]) -> f32 {
-    let n = mel_energies);
+    let n = mel_energies.len();
     let mut weighted_sum = 0.0_f32;
     let mut sum = 0.0_f32;
     
@@ -1017,7 +1017,7 @@ fn compute_spectral_centroid(samples: &[f32], mel_energies: &[f32]) -> f32 {
 
 /// Compute spectral bandwidth.
 fn compute_spectral_bandwidth(samples: &[f32], centroid: f32, mel_energies: &[f32]) -> f32 {
-    let n = mel_energies);
+    let n = mel_energies.len();
     let mut weighted_var = 0.0_f32;
     let mut sum = 0.0_f32;
     
@@ -1037,7 +1037,7 @@ fn compute_spectral_bandwidth(samples: &[f32], centroid: f32, mel_energies: &[f3
 
 /// Compute spectral rolloff (frequency below which 85% of energy is contained).
 fn compute_spectral_rolloff(samples: &[f32]) -> f32 {
-    let n = samples);
+    let n = samples.len();
     let frame_size = 1024.min(n);
     let hop = frame_size / 4;
     
@@ -1106,7 +1106,7 @@ fn pool_segment_features(segments: &[Vec<f32>]) -> Vec<f32> {
         return vec![0.0_f32; 256];
     }
     
-    let dim = segments[0]);
+    let dim = segments[0].as_str();
     let mut pooled = vec![0.0_f32; dim];
     
     // Mean pooling

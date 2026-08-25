@@ -1,11 +1,10 @@
 """
-F350M-R: Shared EvidenceLog initialization utilities.
+evidence.shared — shared EvidenceLog factory + async init.
 
-Centralizes the EvidenceLog factory and async init pattern that was
-previously duplicated across _v2_init.py and legacy entrypoint_injections.
-
-This module is purely procedural — no classes, no state.
-Safe to import from all locations without circular dependency risk.
+Extracted from ``runtime/_shared/evidence_log_shared.py`` (ISSUE #20) to remove
+the circular-import workaround module. This module is purely procedural — no
+classes, no state — and is safe to import from any location without circular
+dependency risk because the heavy ``EvidenceLog`` import is deferred to call time.
 """
 
 from __future__ import annotations
@@ -13,15 +12,14 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-# ISSUE-016 FIX: Import safe_create_task for proper task lifecycle management
-try:
-    from hledac.universal.utils.asyncx._parallel import safe_create_task
-except ImportError:
-    # Fallback if asyncx not available
-    safe_create_task = None  # type: ignore[assignment,misc]
+from hledac.universal.utils.optional_imports import lazy_import
 
 if TYPE_CHECKING:
     pass
+
+
+# ISSUE-016 FIX: Import safe_create_task for proper task lifecycle management
+safe_create_task = lazy_import("hledac.universal.utils.asyncx._parallel:safe_create_task", default=None)
 
 
 def evidence_log_factory(*, sprint_id: str) -> Any:
@@ -30,7 +28,7 @@ def evidence_log_factory(*, sprint_id: str) -> Any:
     The async initialization (`.initialize()` + WARMUP event) is handled
     separately by `evidence_log_init()`.
     """
-    from hledac.universal.evidence_log import EvidenceLog
+    from hledac.universal.evidence import EvidenceLog
 
     return EvidenceLog(run_id=sprint_id, enable_persist=True)
 
@@ -79,13 +77,13 @@ def evidence_log_init(
             _loop_needs_close = True
 
         if loop.is_running():
-            # ISSUE-016 FIX: Use safe_create_task instead of raw asyncio.create_task()
+            # ISSUE-016 FIX: Use safe_create_task instead of raw safe_create_task()
             # This ensures proper error handling and OTel context propagation
             if safe_create_task is not None:
                 _task = safe_create_task(elog.initialize(), name="evidence_log_init")
             else:
                 # Fallback: raw asyncio.create_task with done_callback for error handling
-                _task = asyncio.create_task(elog.initialize())
+                _task = safe_create_task(elog.initialize())
                 _task.add_done_callback(lambda t: t.exception() if not t.cancelled() and t.done() else None)
             # Keep strong reference so the task isn't GC'd before completion
             object.__setattr__(elog, "_init_task", _task)
@@ -115,3 +113,6 @@ def evidence_log_init(
         )
     except Exception:  # noqa: BLE001
         pass  # fail-soft: evidence events never block sprint
+
+
+__all__ = ["evidence_log_factory", "evidence_log_init"]

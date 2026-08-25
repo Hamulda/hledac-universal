@@ -148,7 +148,6 @@ fn fulltext_create_index(index_path: &str, documents: Vec<(String, String)>) -> 
     // ISSUE-011: Chunked indexing — 1000 docs per commit.
     // Each commit flushes intermediate data to mmap, keeping heap < 15MB.
     const CHUNK_SIZE: usize = 1000;
-    let total_docs = documents);
 
     for chunk in documents.chunks(CHUNK_SIZE) {
         for (doc_id, content) in chunk {
@@ -204,7 +203,7 @@ fn fulltext_add_documents(index_path: &str, documents: Vec<(String, String)>) ->
         ))
     })?;
 
-    let schema = index);
+    let schema = index.as_str();
     let doc_id_field = get_doc_id_field(&schema);
     let content_field = get_content_field(&schema);
 
@@ -274,7 +273,7 @@ fn fulltext_search(index_path: &str, query: &str, top_k: u32) -> PyResult<Vec<(S
         Err(_) => return Ok(Vec::new()),
     };
 
-    let schema = index);
+    let schema = index.as_str();
     let doc_id_field = get_doc_id_field(&schema);
     let content_field = get_content_field(&schema);
 
@@ -289,7 +288,7 @@ fn fulltext_search(index_path: &str, query: &str, top_k: u32) -> PyResult<Vec<(S
             ))
         })?;
 
-    let searcher = reader);
+    let searcher = reader.as_str();
     let query_parser = QueryParser::for_index(&index, vec![content_field]);
     let query = query_parser.parse_query(query).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -374,7 +373,7 @@ fn fulltext_doc_count(index_path: &str) -> PyResult<u64> {
                 e
             ))
         })?;
-    let searcher = reader);
+    let searcher = reader.as_str();
     Ok(searcher.num_docs() as u64)
 }
 
@@ -389,7 +388,7 @@ fn fulltext_is_available() -> bool {
 /// Identical to arrow_batch_builder::encode_string_array — duplicated here
 /// to avoid cross-feature dependency (fulltext ≠ data feature gates).
 fn encode_fulltext_string_array(values: &[String]) -> Vec<u8> {
-    let n_values = values);
+    let n_values = values.len();
 
     // Null bitmap: 1 bit per value, MSB first. All-valid = all 1s.
     let null_len = n_values.div_ceil(8);
@@ -505,7 +504,7 @@ fn fulltext_search_arrow<'py>(
         Err(_) => return Ok(None),
     };
 
-    let schema = index);
+    let schema = index.as_str();
     let doc_id_field = get_doc_id_field(&schema);
     let content_field = get_content_field(&schema);
 
@@ -517,7 +516,7 @@ fn fulltext_search_arrow<'py>(
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Tantivy: failed to create reader")
         })?;
 
-    let searcher = reader);
+    let searcher = reader.as_str();
     let query_parser = QueryParser::for_index(&index, vec![content_field]);
     let query = match query_parser.parse_query(query) {
         Ok(q) => q,
@@ -533,7 +532,7 @@ fn fulltext_search_arrow<'py>(
         return Ok(Some(PyBytes::new(py, b"")));
     }
 
-    let n = top_docs);
+    let n = top_docs.len();
     let mut doc_ids: Vec<String> = Vec::with_capacity(n);
     let mut scores: Vec<f64> = Vec::with_capacity(n);
 
@@ -555,7 +554,7 @@ fn fulltext_search_arrow<'py>(
         return Ok(Some(PyBytes::new(py, b"")));
     }
 
-    let actual_n = doc_ids);
+    let actual_n = doc_ids.as_str();
     let ipc_bytes = match build_fulltext_ipc_bytes(doc_ids, scores, actual_n) {
         Ok(bytes) => bytes,
         Err(_) => return Ok(None),

@@ -167,7 +167,8 @@ class ShadowWalkerAlgorithm:
                 full_url = urljoin(base_url, path)
                 predictions.append((full_url, confidence))
         predictions.sort(key=lambda x: x[1], reverse=True)
-        seen_urls = set()
+        from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
+        seen_urls = make_url_dedup(capacity=20_000)
         unique_predictions = []
         for url, confidence in predictions:
             if url not in seen_urls:

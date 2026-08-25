@@ -53,17 +53,18 @@ def _ensure_bootstrap() -> None:
         if _BOOTSTRAPPED:
             return
 
-        try:
-            from hledac.universal.hledac._namespace_bootstrap import ensure_namespace_paths
+    try:
+        from hledac._namespace_bootstrap import ensure_namespace_paths
 
-            ensure_namespace_paths()
-            _BOOTSTRAPPED = True  # Set ONLY after successful bootstrap
-        except ImportError:
-            # ImportError propagates — namespace is broken, not silently ignorable
-            raise
+        ensure_namespace_paths()
+    except ImportError:
+        # Bootstrap module absent in this environment; sibling re-exports
+        # (hledac.core / hledac.security) are skipped. Fail-soft per GHOST #9.
+        pass
+    _BOOTSTRAPPED = True  # Set after bootstrap attempt (success or soft-fail)
 
 
-from _lazy_index import build_module_index
+from ._lazy_index import build_module_index
 
 _AUTO_MODULE_PATHS = [
     # Config

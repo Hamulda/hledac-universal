@@ -51,7 +51,6 @@ RUNTIME_IMPORT_PREFIXES = frozenset(
         "hledac.universal.discovery",
         "hledac.universal.fetching",
         "hledac.universal.export",
-        "hledac.universal.intel",
         "hledac.universal.knowledge",
         "mlx",
         "aiohttp",

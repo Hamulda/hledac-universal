@@ -141,25 +141,26 @@ class RobotsParser:
             agent = user_agent or self._user_agent
             session = self._session
             if session is None or session.is_closed:
-                httpx.Timeout(total=10.0)
+                session = httpx.AsyncClient(timeout=httpx.Timeout(total=10.0))
+                self._session = session
                 close_after = True
             else:
                 close_after = False
             try:
-                async with session.get(robots_url, headers={"User-Agent": agent}) as response:
-                    if response.status_code != 200:
-                        logger.debug(f"Failed to fetch robots.txt: {response.status_code}")
-                        return None
-                    content = await response.text
-                    if not content or len(content) > _MAX_ROBOTS_SIZE:
-                        logger.warning("Robots.txt too large, ignoring")
-                        return None
-                    doc = self._parse_robots_content(content, robots_url)
-                    self._evict_oldest_if_needed()
-                    self._cache[cache_key] = doc
-                    self._cache_access_time[cache_key] = time.time()
-                    logger.debug(f"Robots.txt cached: {cache_key}")
-                    return doc
+                response = await session.get(robots_url, headers={"User-Agent": agent})
+                if response.status_code != 200:
+                    logger.debug(f"Failed to fetch robots.txt: {response.status_code}")
+                    return None
+                content = response.text
+                if not content or len(content) > _MAX_ROBOTS_SIZE:
+                    logger.warning("Robots.txt too large, ignoring")
+                    return None
+                doc = self._parse_robots_content(content, robots_url)
+                self._evict_oldest_if_needed()
+                self._cache[cache_key] = doc
+                self._cache_access_time[cache_key] = time.time()
+                logger.debug(f"Robots.txt cached: {cache_key}")
+                return doc
             finally:
                 if close_after and session:
                     await session.aclose()
@@ -303,7 +304,7 @@ class RobotsParser:
                 if resp.status_code != 200:
                     logger.debug(f"Failed to fetch sitemap: {resp.status_code}")
                     return []
-                content = await resp.text
+                content = resp.text
                 if not content or len(content) > _MAX_SITEMAP_SIZE:
                     logger.warning("Sitemap too large, ignoring")
                     return []
@@ -346,13 +347,22 @@ class RobotsParser:
         robots_doc = await self.fetch_robots(base_url)
         if not robots_doc or not robots_doc.sitemaps:
             return []
+        # F3XX: parallel sitemap fetch — up to 3 sitemaps in parallel,
+        # results combined and truncated to max_urls.
+        sitemap_urls = robots_doc.sitemaps[:3]
+        gathered = await asyncio.gather(
+            *[self.fetch_sitemap(url, max_urls) for url in sitemap_urls],
+            return_exceptions=True,
+        )
+        from hledac.universal.utils.asyncx import _check_gathered
+
+        ok_results, _errors = _check_gathered(list(gathered))
         all_urls = []
-        for sitemap_url in robots_doc.sitemaps[:3]:
-            urls = await self.fetch_sitemap(sitemap_url, max_urls)
-            all_urls.extend(urls)
-            if len(all_urls) >= max_urls:
-                all_urls = all_urls[:max_urls]
-                break
+        for urls in ok_results:
+            if urls:
+                all_urls.extend(urls)
+        if len(all_urls) > max_urls:
+            all_urls = all_urls[:max_urls]
         return all_urls
 
 

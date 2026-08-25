@@ -345,7 +345,7 @@ async def _academic_search_handler(
 ) -> dict[str, Any]:
     """Academic search - thin adapter."""
     try:
-        from .intelligence.academic_search import AcademicSearchEngine
+        from hledac.universal.recon.academic_search import AcademicSearchEngine
 
         known_sources = ["arxiv", "crossref", "semantic_scholar"]
         active_sources = [s for s in sources or known_sources if s in known_sources]

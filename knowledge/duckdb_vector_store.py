@@ -21,7 +21,8 @@ M1 8GB constraints:
 
 vs lancedb_store.py:
   LanceDB-backed RAG is DEPRECATED in favour of DuckDB HNSW.
-  lancedb_store.py is 101KB of dead code (0 production callers).
+  NOTE: lancedb_store.py is still imported by rag_orchestrator.py,
+  memory_coordinator.py and storage_router.py — it is NOT dead code.
   duckdb_rag_store.py is a thin facade over DuckDBShadowStore.
 """
 

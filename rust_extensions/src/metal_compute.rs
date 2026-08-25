@@ -151,7 +151,7 @@ pub struct MetalTelemetry {
 /// Returns: (available: bool, device_name: Option<String>, error_message: Option<String>)
 #[pyfunction]
 pub fn init() -> (bool, Option<String>, Option<String>) {
-    let device = METAL_DEVICE);
+    let device = METAL_DEVICE;
     match device.as_ref() {
         Some(d) => {
             let mut telemetry = METAL_TELEMETRY);
@@ -171,7 +171,7 @@ pub fn init() -> (bool, Option<String>, Option<String>) {
 /// Returns: (available: bool, device_name: str, max_buffer_bytes: usize, allocated_bytes: usize)
 #[pyfunction]
 pub fn get_device_info() -> (bool, Option<String>, usize, usize) {
-    let device = METAL_DEVICE);
+    let device = METAL_DEVICE;
     match device.as_ref() {
         Some(d) => (
             true,
@@ -476,7 +476,7 @@ pub fn batch_matvec(
 /// Returns: dict with matmul_calls, total_tokens, gpu_fallback_cpu, out_of_memory, errors
 #[pyfunction]
 pub fn get_telemetry() -> HashMap<String, u64> {
-    let telemetry = METAL_TELEMETRY);
+    let telemetry = METAL_TELEMETRY;
     let mut result = HashMap::new();
     result.insert("matmul_calls".to_string(), telemetry.matmul_calls);
     result.insert("total_tokens".to_string(), telemetry.total_tokens);
@@ -543,7 +543,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         {
             assert!(device.is_some());
-            let d = device);
+            let d = device.clone();
             assert_eq!(d.name, "Apple M1");
         }
         #[cfg(not(target_os = "macos"))]

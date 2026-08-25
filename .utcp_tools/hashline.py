@@ -4,7 +4,7 @@ def hash_line(line: str) -> str:
     return hashlib.md5(line.rstrip('\r\n').encode('utf-8')).hexdigest()[:4]
 
 def read_hashed(file_path: str):
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding='utf-8') as f:
         lines = f.readlines()
     output = []
     for i, line in enumerate(lines, 1):
@@ -12,7 +12,7 @@ def read_hashed(file_path: str):
     return "".join(output)
 
 def apply_patch(file_path: str, start_hash: str, end_hash: str, new_content: str):
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding='utf-8') as f:
         lines = f.readlines()
 
     start_idx, end_idx = -1, -1

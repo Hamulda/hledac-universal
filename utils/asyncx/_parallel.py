@@ -648,12 +648,26 @@ async def parallel[T](
         wrapped = coros
 
     if timeout is not None and timeout > 0:
-
-        async def _with_timeout() -> list[Any]:
-            async with asyncio.timeout(timeout):
-                return await asyncio.gather(*wrapped, return_exceptions=True)
-
-        raw: list[Any] = await _with_timeout()
+        # Total-budget timeout that stays fail-soft for collect/log policies.
+        # asyncio.timeout() wraps the gather and RAISES on expiry, which would
+        # break the documented "never raise" contract of policy="collect"/"log".
+        # Instead we race the tasks against a deadline and collect the timeout
+        # as an error instead of propagating it.
+        tasks = [asyncio.ensure_future(c) for c in wrapped]
+        done, pending = await asyncio.wait(tasks, timeout=timeout)
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        raw: list[Any] = []
+        for t in tasks:
+            if t in done:
+                exc = t.exception()
+                raw.append(exc if exc is not None else t.result())
+            else:
+                raw.append(TimeoutError(f"parallel(timeout={timeout}s, ctx={ctx or '?'}) exceeded"))
+        if pending and policy in ("raise", "first"):
+            raise TimeoutError(f"parallel(timeout={timeout}s, ctx={ctx or '?'}) exceeded")
     else:
         raw = await asyncio.gather(*wrapped, return_exceptions=True)
 

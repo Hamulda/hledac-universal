@@ -33,11 +33,9 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 ZSTD_AVAILABLE = True
-try:
-    from hledac.universal.utils.msgspec_json import ORJSON_AVAILABLE
-except ImportError:
-    ORJSON_AVAILABLE = False
+ORJSON_AVAILABLE = lazy_import("hledac.universal.utils.msgspec_json:ORJSON_AVAILABLE", default=None)
 from hledac.universal.utils.msgspec_json import decode, encode
+from hledac.universal.utils.optional_imports import lazy_import
 
 try:
     import msgspec as _msgspec_lib
@@ -290,6 +288,7 @@ class MultiLevelContextCache:
     __slots__ = (
         "_embedder_type",
         "_embedding_cache",
+        "_lock",
         "_mlx_manager",
         "_semantic_index",
         "_temp_l2_path",
@@ -297,12 +296,14 @@ class MultiLevelContextCache:
         "embedding_dim",
         "embedding_model",
         "embedding_to_cache_id",
+        "_next_embedding_id",
         "l1_cache",
         "l1_max_size_bytes",
         "l2_cache",
         "l2_storage_path",
         "max_entries",
         "similarity_threshnew",
+        "stats",
     )
 
     def __init__(
@@ -366,7 +367,26 @@ class MultiLevelContextCache:
         self.l2_cache: dict[str, CacheEntry] = {}
         self._semantic_index = None
         self.embedding_to_cache_id: dict[int, str] = {}
+        self._next_embedding_id: int = 0  # monotonic FAISS slot counter (never reused → no id↔vector desync)
         self._embedding_cache: dict[str, Any] = {}
+        self.stats: dict[str, Any] = {
+            "hits": 0,
+            "misses": 0,
+            "total_requests": 0,
+            "l1_promotions": 0,
+            "l2_demotions": 0,
+            "evictions": 0,
+            "similarities": [],
+        }
+        self._lock = threading.RLock()
+        # L2 disk cache was previously only loaded inside the never-called
+        # _ensure_faiss(); load it eagerly so persisted entries are available.
+        self._load_l2_cache()
+        if FAISS_AVAILABLE and _faiss_lib is not None:
+            try:
+                self._rebuild_semantic_index()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Could not rebuild semantic index at init: {e}")
 
     @property
     def semantic_index(self):
@@ -440,10 +460,12 @@ class MultiLevelContextCache:
             raise RuntimeError("faiss not available — semantic index requires faiss to be installed")
         self._semantic_index = _faiss_lib.IndexFlatIP(self.embedding_dim)
         self.embedding_to_cache_id.clear()
+        self._next_embedding_id = 0
         all_entries = list(self.l1_cache.values()) + list(self.l2_cache.values())
         for entry in all_entries:
             if entry.embedding is not None:
-                embedding_id = len(self.embedding_to_cache_id)
+                embedding_id = self._next_embedding_id
+                self._next_embedding_id += 1
                 self.embedding_to_cache_id[embedding_id] = entry.cache_id
                 self._semantic_index.add(entry.embedding.reshape(1, -1).astype("float32"))
 
@@ -573,7 +595,8 @@ class MultiLevelContextCache:
         )
         with self._lock:
             if embedding is not None:
-                embedding_id = len(self.embedding_to_cache_id)
+                embedding_id = self._next_embedding_id
+                self._next_embedding_id += 1
                 self.embedding_to_cache_id[embedding_id] = cache_id
                 self.semantic_index.add(embedding.reshape(1, -1).astype("float32"))
             if self._get_l1_size_bytes() + cache_entry.size_bytes <= self.l1_max_size_bytes:
@@ -854,9 +877,21 @@ def get_cache_manager() -> CacheManager:
     return _cache_manager
 
 
-_global_context_cache = MultiLevelContextCache(
-    l1_max_size_mb=128.0, l2_storage_path=str(Path.home() / ".cache" / "hledac" / "context_cache")
-)
+_global_context_cache: MultiLevelContextCache | None = None
+
+
+def get_global_context_cache() -> MultiLevelContextCache:
+    """Lazily construct the process-wide context cache.
+
+    Avoids module-import side effects (MLX/Metal init, FAISS index build,
+    disk load) by deferring construction until first use.
+    """
+    global _global_context_cache
+    if _global_context_cache is None:
+        _global_context_cache = MultiLevelContextCache(
+            l1_max_size_mb=128.0, l2_storage_path=str(Path.home() / ".cache" / "hledac" / "context_cache")
+        )
+    return _global_context_cache
 
 
 def cached_context(func=None, *, exclude_self: bool = True, cache_type: CacheType = CacheType.QUERY):
@@ -886,11 +921,12 @@ def cached_context(func=None, *, exclude_self: bool = True, cache_type: CacheTyp
                 cache_args = (f.__name__,) + args[1:] + (kwargs,)
             else:
                 cache_args = (f.__name__, args, kwargs)
-            cached = await _global_context_cache.get(cache_args, cache_type)
+            cache = get_global_context_cache()
+            cached = await cache.get(cache_args, cache_type)
             if cached is not None:
                 return cached
             result = await f(*args, **kwargs)
-            await _global_context_cache.set(cache_args, result, cache_type)
+            await cache.set(cache_args, result, cache_type)
             return result
 
         return wrapper

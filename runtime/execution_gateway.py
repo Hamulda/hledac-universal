@@ -64,7 +64,7 @@ def _probe_subinterpreter_support() -> bool:
 
     Checks (in order):
       1. ``HLEDAC_ENABLE_SUBINTERPRETERS=1`` env gate
-      2. Python 3.14+ (PEP 756 — ``concurrent.futures.InterpreterPoolExecutor``)
+      2. Python 3.14+ (PEP 734 — ``concurrent.futures.InterpreterPoolExecutor``)
       3. ``interpreters`` stdlib module exists
       4. Can actually create and destroy a subinterpreter (full roundtrip)
 

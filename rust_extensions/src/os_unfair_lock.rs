@@ -338,7 +338,7 @@ mod tests {
     fn test_os_unfair_lock_basic() {
         let lock = OsUnfairLock::new();
         {
-            let guard = lock);
+            let guard = lock.clone();
             // Critical section
         } // guard dropped, lock released
 
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn test_os_unfair_lock_not_reentrant() {
         let lock = OsUnfairLock::new();
-        let _guard = lock);
+        let _guard = lock.clone();
         // On Darwin, trying to lock again would deadlock.
         // Our try_lock_guard returns None because the lock is already held.
         // This is the safe behavior that prevents actual deadlocks in tests.

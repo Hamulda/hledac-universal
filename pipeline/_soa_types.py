@@ -25,6 +25,10 @@ from typing import TYPE_CHECKING
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
+import msgspec
+
+from hledac.universal.hledac_types.canonical import CanonicalIOC
+
 if TYPE_CHECKING:
     pass
 
@@ -91,6 +95,9 @@ class MatchedBatch(Struct, frozen=True):
     matched_pattern_counts: list[int]  # how many patterns matched
     matched_pattern_labels: list[list[str]]  # labels of matched patterns per URL
     match_errors: list[str | None]  # None = success
+    iocs: list[list[CanonicalIOC]] = msgspec.field(
+        default_factory=list
+    )  # dual-engine CanonicalIOC per URL (rust_regex + brain_ner)
 
 
 class FindingBatch(Struct, frozen=True):

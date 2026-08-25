@@ -21,12 +21,9 @@ from dataclasses import field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    from hledac.universal.utils.asyncx import safe_create_task
-except ImportError:
-    # Fallback for development without full package install
-    from utils.asyncx import safe_create_task
+safe_create_task = lazy_import("hledac.universal.utils.asyncx:safe_create_task", default=lazy_import("utils.asyncx:safe_create_task"))
 
 if TYPE_CHECKING:
     pass

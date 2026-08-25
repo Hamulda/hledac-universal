@@ -48,6 +48,7 @@ from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.utils._patterns import scan_parallel
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
+from hledac.universal.transport.client_pool import get_or_create_httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -1048,10 +1049,8 @@ class DatabasePortScanner:
         """Test Elasticsearch for authentication requirements."""
         result: dict[str, Any] = {"auth_required": None, "version": None}
         try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
-                resp = await client.get(f"http://{host}:{port}/")
+            client = await get_or_create_httpx_client("clearnet")
+            resp = await client.get(f"http://{host}:{port}/", timeout=self.timeout)
             if resp.status_code == 200:
                 result["auth_required"] = False
                 try:
@@ -1177,42 +1176,43 @@ class DatabasePortScanner:
         try:
             import json
 
-            import httpx
-
             results: list[dict[str, Any]] = []
-            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
-                cat_resp = await client.get(f"http://{host}:{port}/_cat/indices?format=json")
-                if cat_resp.status_code != 200:
-                    return []
-                indices_data = cat_resp.json()
-                for idx_entry in indices_data:
-                    index_name = idx_entry.get("index", "")
-                    if not index_name or index_name.startswith("."):
-                        continue
-                    try:
-                        search_resp = await client.post(
-                            f"http://{host}:{port}/{index_name}/_search",
-                            json={"query": {"match_all": {}}, "size": limit, "_source": True},
-                        )
-                        if search_resp.status_code == 200:
-                            body = search_resp.json()
-                            hits = body.get("hits", {}).get("hits", [])
-                            docs = [json.dumps(h.get("_source", {})) for h in hits]
-                            results.append(
-                                {
-                                    "index": index_name,
-                                    "document_count": len(docs),
-                                    "documents_json": docs,
-                                    "error": None,
-                                }
-                            )
-                            logger.info(
-                                f"[HEIST-03] ES (httpx) extracted {len(docs)} docs from {host}:{port}/{index_name}"
-                            )
-                    except Exception as e:
+            client = await get_or_create_httpx_client("clearnet")
+            cat_resp = await client.get(
+                f"http://{host}:{port}/_cat/indices?format=json", timeout=self.timeout
+            )
+            if cat_resp.status_code != 200:
+                return []
+            indices_data = cat_resp.json()
+            for idx_entry in indices_data:
+                index_name = idx_entry.get("index", "")
+                if not index_name or index_name.startswith("."):
+                    continue
+                try:
+                    search_resp = await client.post(
+                        f"http://{host}:{port}/{index_name}/_search",
+                        json={"query": {"match_all": {}}, "size": limit, "_source": True},
+                        timeout=self.timeout,
+                    )
+                    if search_resp.status_code == 200:
+                        body = search_resp.json()
+                        hits = body.get("hits", {}).get("hits", [])
+                        docs = [json.dumps(h.get("_source", {})) for h in hits]
                         results.append(
-                            {"index": index_name, "document_count": None, "documents_json": None, "error": str(e)}
+                            {
+                                "index": index_name,
+                                "document_count": len(docs),
+                                "documents_json": docs,
+                                "error": None,
+                            }
                         )
+                        logger.info(
+                            f"[HEIST-03] ES (httpx) extracted {len(docs)} docs from {host}:{port}/{index_name}"
+                        )
+                except Exception as e:
+                    results.append(
+                        {"index": index_name, "document_count": None, "documents_json": None, "error": str(e)}
+                    )
             return results
         except Exception as e:
             logger.warning(f"[HEIST-03] ES extraction failed {host}:{port}: {e}")
@@ -2779,7 +2779,7 @@ async def search_shodan(query: str, api_key: str | None = None) -> list[dict[str
 
     Args:
         query: Search query (e.g., "apache", "nginx", "product:cisco")
-        api_key: Shodan API key (default: SHODAN_API_KEY env var)
+        api_key: Shodan API key (default: HLEDAC_SHODAN_API_KEY, alias SHODAN_API_KEY)
 
     Returns:
         List of dicts with structure:
@@ -2789,11 +2789,11 @@ async def search_shodan(query: str, api_key: str | None = None) -> list[dict[str
       - Rate limited (uses APICache with 1-hour TTL)
       - No API key hardcoded (uses .env)
     """
-    import os
+    from hledac.universal._core.env_config import ENV
 
     results: list[dict[str, Any]] = []
     if not api_key:
-        api_key = os.environ.get("SHODAN_API_KEY", "")
+        api_key = ENV.get_api_key("HLEDAC_SHODAN_API_KEY")
     cache = APICache(ttl_seconds=3600)
     cache_key = f"shodan:{query}:{api_key}"
     cached = cache.get(cache_key)
@@ -2849,8 +2849,9 @@ async def search_censys(query: str, api_id: str | None = None, api_secret: str |
 
     Args:
         query: Search query (e.g., "services.tls.certificates.leaf_data.subject.common_name: example.com")
-        api_id: Censys API ID (default: CENSYS_API_ID env var)
-        api_secret: Censys API Secret (default: CENSYS_API_SECRET env var)
+        api_id: Censys API ID (default: HLEDAC_CENSYS_API_ID, alias CENSYS_API_ID)
+        api_secret: Censys API Secret (default: HLEDAC_CENSYS_API_SECRET, aliases
+            CENSYS_API_SECRET / CENSYS_SECRET)
 
     Returns:
         List of dicts with structure:
@@ -2861,13 +2862,14 @@ async def search_censys(query: str, api_id: str | None = None, api_secret: str |
       - No API credentials hardcoded (uses .env)
     """
     import base64
-    import os
+
+    from hledac.universal._core.env_config import ENV
 
     results: list[dict[str, Any]] = []
     if not api_id:
-        api_id = os.environ.get("CENSYS_API_ID", "")
+        api_id = ENV.get_api_key("HLEDAC_CENSYS_API_ID")
     if not api_secret:
-        api_secret = os.environ.get("CENSYS_API_SECRET", "")
+        api_secret = ENV.get_api_key("HLEDAC_CENSYS_API_SECRET")
     cache = APICache(ttl_seconds=3600)
     cache_key = f"censys:{query}"
     cached = cache.get(cache_key)
@@ -3124,16 +3126,16 @@ async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | No
     """
     if port in (80, 8080, 443, 8443):
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                protocol = "https" if port in (443, 8443) else "http"
-                resp = await client.get(f"{protocol}://{host}:{port}/", timeout=timeout)
-                headers = dict(resp.headers)
-                banner_parts = [f"HTTP/{resp.http_version} {resp.status_code}"]
-                if "server" in headers:
-                    banner_parts.append(f"Server: {headers['server']}")
-                if "x-powered-by" in headers:
-                    banner_parts.append(f"X-Powered-By: {headers['x-powered-by']}")
-                return "\n".join(banner_parts)
+            client = await get_or_create_httpx_client("clearnet")
+            protocol = "https" if port in (443, 8443) else "http"
+            resp = await client.get(f"{protocol}://{host}:{port}/", timeout=timeout)
+            headers = dict(resp.headers)
+            banner_parts = [f"HTTP/{resp.http_version} {resp.status_code}"]
+            if "server" in headers:
+                banner_parts.append(f"Server: {headers['server']}")
+            if "x-powered-by" in headers:
+                banner_parts.append(f"X-Powered-By: {headers['x-powered-by']}")
+            return "\n".join(banner_parts)
         except Exception:
             pass
     else:

@@ -248,7 +248,7 @@ pub fn facenet_register_model(
 /// Returns: True if FaceNet model is loaded
 #[pyfunction]
 pub fn facenet_is_registered() -> bool {
-    let registry = FACENET_REGISTRY);
+    let registry = FACENET_REGISTRY;
     registry.is_loaded()
 }
 
@@ -268,7 +268,7 @@ pub fn facenet_unregister() -> Result<(), PyErr> {
 /// Returns: Dict with model_id, embedding_dim, or None
 #[pyfunction]
 pub fn facenet_get_model_info() -> Option<Vec<(String, String)>> {
-    let registry = FACENET_REGISTRY);
+    let registry = FACENET_REGISTRY;
     registry.get_model().map(|m| {
         vec![
             ("model_id".to_string(), m.model_id.clone()),
@@ -388,7 +388,7 @@ pub fn voiceprint_register_model(
 /// Returns: True if voiceprint model is loaded
 #[pyfunction]
 pub fn voiceprint_is_registered() -> bool {
-    let registry = VOICEPRINT_REGISTRY);
+    let registry = VOICEPRINT_REGISTRY;
     registry.is_loaded()
 }
 
@@ -408,7 +408,7 @@ pub fn voiceprint_unregister() -> Result<(), PyErr> {
 /// Returns: Dict with model_id, embedding_dim, or None
 #[pyfunction]
 pub fn voiceprint_get_model_info() -> Option<Vec<(String, String)>> {
-    let registry = VOICEPRINT_REGISTRY);
+    let registry = VOICEPRINT_REGISTRY;
     registry.get_model().map(|m| {
         vec![
             ("model_id".to_string(), m.model_id.clone()),
@@ -787,7 +787,7 @@ pub fn init() -> (bool, Option<String>) {
 /// Returns: (available: bool, model_count: usize, max_models: usize)
 #[pyfunction]
 pub fn get_status() -> (bool, usize, usize) {
-    let registry = ANE_GLOBAL_REGISTRY);
+    let registry = ANE_GLOBAL_REGISTRY;
     let available = std::env::consts::OS == "macos";
     (available, registry.model_count(), ANE_MAX_MODELS)
 }
@@ -904,7 +904,7 @@ pub fn run_inference(
     input_ids: Vec<i64>,
     attention_mask: Vec<i64>,
 ) -> Result<Vec<f32>, PyErr> {
-    let registry = ANE_GLOBAL_REGISTRY);
+    let registry = ANE_GLOBAL_REGISTRY;
 
     let meta = registry.get_model(&model_id).ok_or_else(|| {
         pyo3::exceptions::PyValueError::new_err(format!("ANE model not found: {}", model_id))
@@ -968,7 +968,7 @@ pub fn embed_tokens(
 ///          ane_fallback_cpu, ane_fallback_gpu, errors
 #[pyfunction]
 pub fn get_telemetry() -> HashMap<String, u64> {
-    let telemetry = ANE_TELEMETRY);
+    let telemetry = ANE_TELEMETRY;
     let mut result = HashMap::new();
     result.insert("embed_calls".to_string(), telemetry.embed_calls);
     result.insert("embed_tokens".to_string(), telemetry.embed_tokens);
@@ -1104,7 +1104,7 @@ pub fn gnn_validate_batch(batch_size: usize, in_dim: usize) -> Result<(), PyErr>
 #[pyfunction]
 pub fn gnn_store_embeddings(embeddings: Vec<(String, Vec<f32>)>) -> Result<usize, PyErr> {
     let mut store = EMBEDDING_STORE);
-    let count = embeddings);
+    let count = embeddings.clone();
 
     for (kuzu_id, emb) in embeddings {
         if emb.len() > 512 {
@@ -1127,7 +1127,7 @@ pub fn gnn_store_embeddings(embeddings: Vec<(String, Vec<f32>)>) -> Result<usize
 /// Returns: Vec of (kuzu_id, embedding) tuples (missing nodes return empty vec)
 #[pyfunction]
 pub fn gnn_get_embeddings(kuzu_ids: Vec<String>) -> Vec<(String, Vec<f32>)> {
-    let store = EMBEDDING_STORE);
+    let store = EMBEDDING_STORE;
 
     kuzu_ids
         .into_iter()
@@ -1160,7 +1160,7 @@ pub fn gnn_run_inference(
     features: Vec<f32>,
     edges: Vec<(usize, usize)>,
 ) -> Result<Vec<Vec<f32>>, PyErr> {
-    let registry = GNN_REGISTRY);
+    let registry = GNN_REGISTRY;
 
     let meta = registry.get(&model_id).ok_or_else(|| {
         pyo3::exceptions::PyValueError::new_err(format!(
@@ -1169,7 +1169,7 @@ pub fn gnn_run_inference(
         ))
     })?;
 
-    let n_nodes = node_ids);
+    let n_nodes = node_ids.len();
     if n_nodes == 0 {
         return Ok(Vec::new());
     }
@@ -1312,7 +1312,7 @@ pub fn gnn_predict_links(
             .iter()
             .filter(|n| dst_neighbors.contains(n))
             );
-        let common_count = common);
+        let common_count = common.clone();
 
         // Adamic-Adar
         let mut adamic_adar = 0.0f32;
@@ -1586,7 +1586,7 @@ pub fn crossmodal_query_face(
     let max_results = max_results.unwrap_or(10);
     let min_similarity = min_similarity.unwrap_or(0.7);
 
-    let store = CROSS_MODAL_STORE);
+    let store = CROSS_MODAL_STORE.clone();
     let results = store.query_face_lsh(&embedding, max_results * 2); // Get extra for filtering
 
     // Filter by minimum similarity
@@ -1614,7 +1614,7 @@ pub fn crossmodal_query_voice(
     let max_results = max_results.unwrap_or(10);
     let min_similarity = min_similarity.unwrap_or(0.7);
 
-    let store = CROSS_MODAL_STORE);
+    let store = CROSS_MODAL_STORE.clone();
     let results = store.query_voice_lsh(&embedding, max_results * 2);
 
     // Filter by minimum similarity
@@ -1633,7 +1633,7 @@ pub fn crossmodal_query_voice(
 /// Returns: Embedding vector or None
 #[pyfunction]
 pub fn crossmodal_get_face(node_id: String) -> Option<Vec<f32>> {
-    let store = CROSS_MODAL_STORE);
+    let store = CROSS_MODAL_STORE.clone();
     store.get_face(&node_id).cloned()
 }
 
@@ -1645,7 +1645,7 @@ pub fn crossmodal_get_face(node_id: String) -> Option<Vec<f32>> {
 /// Returns: Embedding vector or None
 #[pyfunction]
 pub fn crossmodal_get_voice(node_id: String) -> Option<Vec<f32>> {
-    let store = CROSS_MODAL_STORE);
+    let store = CROSS_MODAL_STORE.clone();
     store.get_voice(&node_id).cloned()
 }
 
@@ -1686,7 +1686,7 @@ pub fn crossmodal_clear() {
 /// Returns: Dict with face_count and voice_count
 #[pyfunction]
 pub fn crossmodal_stats() -> std::collections::HashMap<String, usize> {
-    let store = CROSS_MODAL_STORE);
+    let store = CROSS_MODAL_STORE.clone();
     let (face_count, voice_count) = store);
     let mut stats = std::collections::HashMap::new();
     stats.insert("face_count".to_string(), face_count);
@@ -2040,7 +2040,7 @@ pub fn run_prm_inference_batch(
         return Ok(Vec::new());
     }
 
-    let batch_size = features_batch);
+    let batch_size = features_batch.len();
 
     for (i, features) in features_batch.iter().enumerate() {
         if features.len() != 16 {
@@ -2128,7 +2128,7 @@ pub fn run_prm_inference_batch(
 #[pyfunction]
 #[cfg(feature = "coreml_ane")]
 pub fn get_prm_telemetry() -> HashMap<String, u64> {
-    let telemetry = PRM_TELEMETRY);
+    let telemetry = PRM_TELEMETRY;
     let mut result = HashMap::new();
     result.insert("prm_inference_calls".to_string(), telemetry.prm_inference_calls);
     result.insert("prm_batch_calls".to_string(), telemetry.prm_batch_calls);

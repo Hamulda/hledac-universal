@@ -137,8 +137,10 @@ async def _fetch_cdx_data(
 
 async def _parse_cdx_rows(rows: list, max_results: int, query: str, now_ts: float) -> list[DiscoveryHit]:
     """Parse CDX rows into DiscoveryHit objects."""
+    # M-2026-FIX: was unbounded set[str] — RBF (Rust-accelerated) is bounded and O(1).
+    from hledac.universal.utils.bloom_filter import RotatingBloomFilter
     hits_list: list[DiscoveryHit] = []
-    seen_urls: set[str] = set()
+    seen_urls: RotatingBloomFilter = RotatingBloomFilter(max_elements=200_000, error_rate=0.005)
 
     for row in rows:
         if len(row) < 3:

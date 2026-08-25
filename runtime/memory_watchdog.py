@@ -16,6 +16,8 @@ NO PRODUCTION CALLERS — DO NOT USE IN NEW CODE.
 # Re-export the canonical symbols so that old test files / probe imports
 # that do ``from hledac.universal.runtime.memory_watchdog import PressureLevel``
 # get the real enum without modification.
+from __future__ import annotations
+
 from hledac.universal.coordinators.enums import MemoryPressureLevel
 
 __all__ = ["MemoryWatchdog", "PressureLevel"]

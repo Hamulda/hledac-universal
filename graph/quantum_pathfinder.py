@@ -1882,7 +1882,8 @@ class DuckPGQGraph:
         )
         return row_id
 
-    def upsert_ioc(
+
+    def _upsert_ioc_duckpgq_impl(
         self,
         ioc_value: str,
         ioc_type: str = "unknown",
@@ -1913,6 +1914,32 @@ class DuckPGQGraph:
             Stable node id (xxhash64-based).
         """
         return self.add_ioc(
+            ioc_value,
+            ioc_type,
+            confidence,
+            source,
+            observed_at=observed_at,
+            provenance=provenance,
+            classification_status=classification_status,
+        )
+
+    def upsert_ioc(
+        self,
+        ioc_value: str,
+        ioc_type: str = "unknown",
+        confidence: float = 0.5,
+        source: str = "",
+        observed_at: float | None = None,
+        *,
+        provenance: dict | None = None,
+        classification_status: str = "classified",
+    ) -> int | None:
+        """Public IOC upsert — delegates to _upsert_ioc_duckpgq_impl.
+
+        ISSUE #4: Single public surface for DuckPGQGraph IOC upsert.
+        All callers must go through graph_service.upsert_ioc() dispatcher.
+        """
+        return self._upsert_ioc_duckpgq_impl(
             ioc_value,
             ioc_type,
             confidence,
@@ -2002,7 +2029,17 @@ class DuckPGQGraph:
             return
         src_id = self.add_ioc(src)
         dst_id = self.add_ioc(dst)
-        self.con.execute("INSERT INTO ioc_edges VALUES (?, ?, ?, ?, ?)", [src_id, dst_id, rel_type, weight, evidence])
+        # Prevent unbounded duplicate edges on re-observation. ioc_edges has no unique
+        # constraint, so guard the insert with a NOT EXISTS predicate instead.
+        self.con.execute(
+            "INSERT INTO ioc_edges (src_id, dst_id, rel_type, weight, evidence) "
+            "SELECT ?, ?, ?, ?, ? "
+            "WHERE NOT EXISTS ("
+            "   SELECT 1 FROM ioc_edges "
+            "   WHERE src_id = ? AND dst_id = ? AND rel_type = ?"
+            ")",
+            [src_id, dst_id, rel_type, weight, evidence, src_id, dst_id, rel_type],
+        )
 
     def find_connected(self, value: str, max_hops: int = 2) -> list[dict]:
         """SQL/PGQ MATCH s recursive CTE fallback. max_hops je vzdy respektován."""

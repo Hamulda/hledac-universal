@@ -63,7 +63,7 @@ fn resolve_pointer<'a>(
         current = match current {
             simd_json::BorrowedValue::Object(obj) => {
                 // simd-json objects are ordered — linear scan for key
-                let key = unescaped);
+                let key = unescaped.clone();
                 obj.iter()
                     .find_map(|(k, v)| if k == key { Some(v) } else { None })?
             }

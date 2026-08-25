@@ -115,10 +115,14 @@ async def is_freenet_available() -> bool:
         _freenet_check_time = now
         return False
 
+    # ISSUE #8: pooled client — the FProxy daemon is probed repeatedly, so
+    # keep-alive reuse matters and a per-probe client is pure overhead.
+    from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-            resp = await client.get(f"{FREENET_FPROXY_URL}/")
-            _freenet_available = resp.status_code < 500
+        client = await get_or_create_httpx_client("clearnet")
+        resp = await client.get(f"{FREENET_FPROXY_URL}/", timeout=httpx.Timeout(10.0))
+        _freenet_available = resp.status_code < 500
     except Exception:
         _freenet_available = False
 
@@ -194,33 +198,36 @@ async def fetch_freesite(
     path = _normalize_freenet_key(key)
     url = f"{FREENET_FPROXY_URL}{path}"
 
+    # ISSUE #8: pooled client; per-call timeout preserved as request override.
+    from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                content_length = resp.headers.get("Content-Length")
-                if content_length:
-                    if int(content_length) > max_size:
-                        logger.warning(
-                            "Freenet response too large: %s bytes for %s",
-                            content_length,
-                            key[:60],
-                        )
-                        return None
-                content = resp.text
-                if len(content.encode("utf-8")) > max_size:
+        client = await get_or_create_httpx_client("clearnet")
+        resp = await client.get(url, timeout=httpx.Timeout(timeout))
+        if resp.status_code == 200:
+            content_length = resp.headers.get("Content-Length")
+            if content_length:
+                if int(content_length) > max_size:
                     logger.warning(
-                        "Freenet response too large after decode: %s",
+                        "Freenet response too large: %s bytes for %s",
+                        content_length,
                         key[:60],
                     )
                     return None
-                return content
-            logger.debug(
-                "Freenet fetch failed: status %s for %s",
-                resp.status_code,
-                key[:60],
-            )
-            return None
+            content = resp.text
+            if len(content.encode("utf-8")) > max_size:
+                logger.warning(
+                    "Freenet response too large after decode: %s",
+                    key[:60],
+                )
+                return None
+            return content
+        logger.debug(
+            "Freenet fetch failed: status %s for %s",
+            resp.status_code,
+            key[:60],
+        )
+        return None
     except TimeoutError, httpx.TimeoutException:
         logger.debug("Freenet fetch timeout: %s", key[:60])
         return None
@@ -249,11 +256,15 @@ async def fetch_freesite_json(
 
     path = _normalize_freenet_key(key)
     url = f"{FREENET_FPROXY_URL}{path}"
+
+    # ISSUE #8: pooled client; per-call timeout preserved as request override.
+    from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                return resp.json()
+        client = await get_or_create_httpx_client("clearnet")
+        resp = await client.get(url, timeout=httpx.Timeout(timeout))
+        if resp.status_code == 200:
+            return resp.json()
     except Exception as e:
         logger.debug("Freenet JSON fetch error %s: %s", key[:60], e)
     return None

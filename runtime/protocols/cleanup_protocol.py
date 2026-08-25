@@ -27,8 +27,6 @@ from _core.protocols.cleanup_protocol import (
     DEFAULT_ACLOSE_TIMEOUT_S,
     )
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 # Re-export for backward compatibility

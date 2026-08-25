@@ -1101,7 +1101,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
             return []
 
         try:
-            from hledac.universal.intel.whois_service import (
+            from hledac.universal.recon.whois_service import (
                 WhoisService,
             )
         except Exception:
@@ -1113,7 +1113,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
             hist_api = os.environ.get("HLEDAC_WHOIS_API")
             hist_key = os.environ.get("HLEDAC_WHOIS_API_KEY")
             if hist_api and hist_key:
-                from hledac.universal.intel.whois_service import (
+                from hledac.universal.recon.whois_service import (
                     configure_historical_api,
                 )
 

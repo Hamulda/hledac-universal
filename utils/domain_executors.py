@@ -87,7 +87,7 @@ DOMAIN LAYOUT (M1 8GB target)
 
 INTERPRETERPOOLEXECUTOR (Python 3.14+)
 ======================================
-PEP 756: InterpreterPoolExecutor provides true parallelism via subinterpreters.
+PEP 734: InterpreterPoolExecutor provides true parallelism via subinterpreters.
 Each worker has its own GIL — no GIL contention.
 
   When to use:

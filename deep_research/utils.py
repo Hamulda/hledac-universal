@@ -105,7 +105,7 @@ class LinkRotDetector:
         async def _attempt_check() -> LinkCheckResult:
             """Single attempt at checking URL status."""
             try:
-                async with session.head(url, allow_redirects=True, verify=False) as response:
+                async with session.head(url, allow_redirects=True) as response:
                     status = response.status
                     redirect_url = str(response.url) if response.url != url else None
                     if 200 <= status < 400:
@@ -121,7 +121,7 @@ class LinkRotDetector:
                             url=url, is_alive=False, status_code=status, error=f"HTTP {status} - Content not found"
                         )
                     if status >= 400:
-                        async with session.get(url, allow_redirects=True, verify=False) as get_response:
+                        async with session.get(url, allow_redirects=True) as get_response:
                             get_status = get_response.status
                             if 200 <= get_status < 400:
                                 return LinkCheckResult(

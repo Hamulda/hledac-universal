@@ -190,7 +190,10 @@ def _build_document_envelope(
         Falls back to plain text if serialization fails.
     """
     try:
-        import json
+        try:
+            import orjson as _json
+        except ImportError:
+            import json as _json
 
         envelope = {
             "audit_reason": f"document_triage:{file_type}",
@@ -220,11 +223,15 @@ def _build_document_envelope(
             if text_content and len(text_content) > 1000
             else text_content or "",
         }
-        json_text = json.dumps(envelope)
+        json_text = _json.dumps(envelope)
+        if isinstance(json_text, bytes):
+            json_text = json_text.decode("utf-8")
         if len(json_text) > _MAX_ENVELOPE_SIZE:
             envelope["triage"]["ocr_snippets"] = envelope["triage"]["ocr_snippets"][:5]
             envelope["content_preview"] = envelope["content_preview"][:500]
-            json_text = json.dumps(envelope)
+        json_text = _json.dumps(envelope)
+        if isinstance(json_text, bytes):
+            json_text = json_text.decode("utf-8")
         return json_text
     except Exception:
         return text_content or ""

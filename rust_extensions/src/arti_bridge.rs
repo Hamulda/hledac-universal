@@ -251,7 +251,7 @@ impl ArtiNode {
         *self.bootstrap_status.lock() = "bootstrapping...");
 
         // [MODERN-07]: Removed runtime alive check — shared runtime lives for entire process.
-        let handle = self.handle);
+        let handle = self.handle.as_str();
         let result: Result<(TorClient<PreferredRuntime>, usize), String> =
             handle.block_on(async {
                 let fut = async {
@@ -308,7 +308,7 @@ impl ArtiNode {
         })?;
 
         let tc = {
-            let guard = self.client);
+            let guard = self.client.as_str();
             guard
                 .as_ref()
                 .ok_or_else(|| {
@@ -320,7 +320,7 @@ impl ArtiNode {
         };
 
         // [MODERN-07]: Removed runtime alive check — shared runtime is always alive.
-        let handle = self.handle);
+        let handle = self.handle.as_str();
 
         // Try with retry — retry on transient errors only
         let mut last_error = String::new();
@@ -366,20 +366,20 @@ impl ArtiNode {
         let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
 
         let tc = {
-            let guard = self.client);
+            let guard = self.client.as_str();
             guard
                 .as_ref()
                 .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Tor not bootstrapped"))?
                 .clone()
         };
 
-        let handle = self.handle);
+        let handle = self.handle.as_str();
 
         let results: Vec<(u16, Vec<u8>)> = handle.block_on(async {
             let mut handles = Vec::with_capacity(urls.len());
 
             for url in urls {
-                let tc_clone = tc);
+                let tc_clone = tc.as_str();
                 let timeout_clone = timeout;
                 let pool = ConnectionPool::new(MAX_POOL_SIZE);
 
@@ -461,7 +461,7 @@ impl ArtiNode {
     fn isolate_circuit(&self, session_name: &str) -> bool {
         // Arti handles circuit isolation internally per session.
         // For now, we just validate that the client is bootstrapped.
-        let guard = self.client);
+        let guard = self.client.as_str();
         if guard.is_some() {
             tracing::debug!("ArtiNode circuit isolated for session: {}", session_name);
             true
@@ -600,11 +600,11 @@ impl ArtiNode {
     ///     print("Fresh circuits ready")
     /// ```
     fn rotate_all_circuits(&self) -> bool {
-        let handle = self.handle);
+        let handle = self.handle.as_str();
 
         let result: Result<bool, String> = handle.block_on(async {
             let tc = {
-                let guard = self.client);
+                let guard = self.client.as_str();
                 match guard.as_ref() {
                     Some(c) => c.clone(),
                     None => return Err("Not bootstrapped".to_string()),
@@ -654,9 +654,9 @@ impl ArtiNode {
         py: Python<'_>,
     ) -> PyResult<Bound<'_, PyAny>> {
         // Extract data before async block to avoid self lifetime issues
-        let handle = self.handle);
+        let handle = self.handle.as_str();
         let client_clone = {
-            let guard = self.client);
+            let guard = self.client.as_str();
             guard.clone()
         };
         let pool = std::sync::Arc::clone(&self.pool);
@@ -736,7 +736,7 @@ struct ParsedUrl {
 }
 
 fn parse_http_url(url: &str) -> Result<ParsedUrl, String> {
-    let url = url);
+    let url = url.as_bytes();
     let (host_part, path) = if let Some(rest) = url.strip_prefix("http://") {
         rest.find('/')
             .map(|i| (&rest[..i], &rest[i..]))
@@ -890,7 +890,7 @@ fn is_transient_error(error: &str) -> bool {
         "resource temporarily unavailable",
     ];
 
-    let lower = error);
+    let lower = error.as_str();
     transient_patterns.iter().any(|p| lower.contains(p))
 }
 
@@ -972,7 +972,7 @@ pub fn fetch_onion_async<'py>(
     };
 
     let tc = {
-        let guard = node.client);
+        let guard = node.client.as_str();
         match guard.as_ref() {
             Some(c) => c.clone(),
             None => {
@@ -1058,7 +1058,7 @@ pub fn fetch_batch_async<'py>(
     let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
 
     let tc = {
-        let guard = node.client);
+        let guard = node.client.as_str();
         match guard.as_ref() {
             Some(c) => c.clone(),
             None => {
@@ -1074,7 +1074,7 @@ pub fn fetch_batch_async<'py>(
         let mut handles = Vec::with_capacity(urls.len());
 
         for url in urls {
-            let tc_clone = tc);
+            let tc_clone = tc.as_str();
             let timeout_clone = timeout;
             let pool = ConnectionPool::new(MAX_POOL_SIZE);
 

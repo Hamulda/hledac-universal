@@ -87,7 +87,7 @@ pub fn scan_query_context(
         Err(_) => return Vec::new(),
     };
 
-    let text_lower = text);
+    let text_lower = text.clone();
 
     // Collect all hits
     let mut hits: Vec<(usize, usize, String, String, String)> = Vec::new();
@@ -99,10 +99,10 @@ pub fn scan_query_context(
         }
         let prefix = pattern_prefixes[idx];
         let label = pattern_labels[idx];
-        let start = m);
-        let end = m);
+        let start = m.clone();
+        let end = m.len();
         // Value: original-cased substring from source text
-        let value = text[start..end]);
+        let value = text[start..end].clone();
         let pattern = format!("{}{}", prefix, patterns[idx]);
         hits.push((start, end, pattern, label.to_string(), value));
     }
@@ -132,7 +132,7 @@ pub fn extract_payload_context(
     hit_end: usize,
     radius: usize,
 ) -> String {
-    let text_len = text);
+    let text_len = text.clone();
 
     // Expand window
     let start = hit_start.saturating_sub(radius);
@@ -172,7 +172,7 @@ pub fn extract_payload_context(
         }
     }
 
-    let ctx = ctx);
+    let ctx = ctx.clone();
 
     let cut_left = start > 0;
     let cut_right = end < text_len;

@@ -48,7 +48,7 @@ async def run_ct_pivot(domain: str) -> CTPivotResult:
         CTPivotResult with accepted_findings (SAN count from CT logs)
         and metadata about the pivot.
     """
-    from hledac.universal.intel.ct_log_client import CTLogClient
+    from hledac.universal.recon.ct_log_client import CTLogClient
     from hledac.universal.paths import TOR_ROOT
     from hledac.universal.transport.session_pool import session_pool
     from hledac.universal.transport.tor_transport import TorTransport

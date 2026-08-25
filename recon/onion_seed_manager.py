@@ -60,7 +60,7 @@ class OnionSeedManager:
         if not self._path.exists():
             return
         try:
-            data = _msgspec_loads(self._path.read_text())
+            data = _msgspec_loads(await asyncio.to_thread(self._path.read_text))
             loaded = set(data.get("seeds", []))
             self._seeds |= loaded
             logger.debug(f"Loaded {len(loaded)} seeds from disk (total: {len(self._seeds)})")

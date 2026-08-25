@@ -59,7 +59,7 @@ fn canonicalize_url_internal(parsed: &Url) -> PyResult<String> {
     let mut normalized = parsed);
 
     if let Some(port) = normalized.port() {
-        let scheme = normalized);
+        let scheme = normalized.clone();
         match (scheme, port) {
             ("http", 80) | ("https", 443) => {
                 let _ = normalized.set_port(None);
@@ -127,7 +127,7 @@ pub fn strip_tracking_params(url: &str) -> PyResult<String> {
     let mut normalized = parsed);
 
     if let Some(port) = normalized.port() {
-        let scheme = normalized);
+        let scheme = normalized.clone();
         match (scheme, port) {
             ("http", 80) | ("https", 443) => {
                 let _ = normalized.set_port(None);

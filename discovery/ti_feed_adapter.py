@@ -601,8 +601,9 @@ async def search_crtsh(domain: str, max_results: int = 100) -> list[dict]:
             return []
         if status != 200:
             return []
+        from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
         results: list[dict] = []
-        seen: set[str] = set()
+        seen = make_url_dedup(capacity=50_000)
         for cert in data[:max_results]:
             for sub in cert.get("name_value", "").split("\n"):
                 sub = sub.strip()
@@ -1268,7 +1269,7 @@ class WaybackArchiveAdapter(SourceAdapter):
         if limit is None:
             limit = self.HARD_LIMIT
         limit = min(max(limit, 1), self.HARD_LIMIT)
-        from hledac.universal.intel.archive_discovery import ArchiveDiscovery, ArchiveResult
+        from hledac.universal.recon.archive_discovery import ArchiveDiscovery, ArchiveResult
 
         entries: list[NormalizedEntry] = []
         try:
@@ -1407,7 +1408,7 @@ async def _handle_github_dork(task, scheduler) -> None:
 
 @register_task("shodan_enrich")
 async def _handle_shodan_enrich(task, scheduler) -> None:
-    from hledac.universal.intel.shodan_wrapper import search_shodan_to_findings
+    from hledac.universal.recon.shodan_wrapper import search_shodan_to_findings
 
     findings, raw_results = await search_shodan_to_findings(query=task.ioc_value, limit=10)
     if raw_results:
@@ -1641,7 +1642,11 @@ async def fetch_ipfs_cid(cid: str) -> dict:
             }
     except Exception as e:
         logger.debug("[IPFS] Local daemon fetch failed for CID %s: %s", cid, e)
-    for gw in _IPFS_GATEWAYS:
+    # M-2026-FIX: race all gateways concurrently — first successful response wins.
+    # Uses race_first_success() which cancels all others immediately on first win.
+    from hledac.universal.utils.asyncx import race_first_success
+
+    async def _try_gateway(gw: str) -> dict | None:
         try:
             resp = await session.get(f"{gw}{cid}", timeout=httpx.Timeout(30))
             if resp.status_code == 200:
@@ -1655,6 +1660,18 @@ async def fetch_ipfs_cid(cid: str) -> dict:
                 }
         except Exception as e:
             logger.debug("[IPFS] Gateway fetch failed for CID %s via %s: %s", cid, gw, e)
+        return None
+
+    gateways_with_labels = [(gw, gw) for gw in _IPFS_GATEWAYS]
+    race_result = await race_first_success(
+        *gateways_with_labels,
+        timeout=60.0,
+        label="ipfs_gateway",
+        require_truthy=True,
+    )
+    if race_result.result is not None:
+        return race_result.result
+
     return {
         "cid": cid,
         "source": None,
@@ -2077,7 +2094,7 @@ async def _handle_cve_to_github(task, scheduler) -> None:
     from github_dork (generic code search) — search_cve uses the
     `language:Python OR language:C exploit OR poc` query template scoped to a CVE.
     """
-    from hledac.universal.intel.exposure_clients import GitHubCodeSearchClient
+    from hledac.universal.recon.exposure_clients import GitHubCodeSearchClient
     from hledac.universal.paths import CACHE_ROOT
 
     try:

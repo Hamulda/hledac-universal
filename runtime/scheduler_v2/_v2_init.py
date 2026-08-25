@@ -43,8 +43,8 @@ class _Injection(Struct, frozen=True):
     order: int = 10
 
 
-# EvidenceLog init from shared module (F350M-R)
-from hledac.universal.runtime._shared.evidence_log_shared import (
+# EvidenceLog init from shared module (F350M-R / ISSUE #20: moved to evidence.shared)
+from hledac.universal.evidence.shared import (
     evidence_log_init as _evidence_log_init,
 )
 

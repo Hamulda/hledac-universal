@@ -21,8 +21,6 @@ from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import parallel_ok
 
-if TYPE_CHECKING:
-
 # Availability flag — set once at module load
 _TLS13_RUST_AVAILABLE = False
 
@@ -147,7 +145,7 @@ class _PythonTlsDomain:
                 "error": "",
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return _make_error_result(host, port, "Timeout")
         except ConnectionRefusedError:
             return _make_error_result(host, port, "Connection refused")

@@ -16,12 +16,10 @@ import pathlib
 import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from hledac.universal.utils.optional_imports import lazy_import
 
 # Optional: orjson for optimized serialization
-try:
-    import orjson
-except ImportError:
-    orjson = None  # type: ignore[assignment]
+orjson = lazy_import("orjson", default=None)
 
 # msgspec for AcqReportPayload (Issue #9)
 # Import lazily via compat layer for msgspec 0.22+ compatibility

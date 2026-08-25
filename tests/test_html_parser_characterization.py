@@ -296,7 +296,7 @@ class TestArchiveDiscoveryMetadataExtraction:
 
     def test_extracts_standard_metadata(self) -> None:
         """All standard meta fields are extracted."""
-        from intelligence.archive_discovery import ArchiveResurrector
+        from hledac.universal.recon.archive_discovery import ArchiveResurrector
 
         resurrector = ArchiveResurrector()
         meta = resurrector._extract_metadata_html(_METADATA_HTML_FIXTURE)
@@ -309,7 +309,7 @@ class TestArchiveDiscoveryMetadataExtraction:
 
     def test_extracts_publisheddate_fallback(self) -> None:
         """publishedDate meta tag is captured as date."""
-        from intelligence.archive_discovery import ArchiveResurrector
+        from hledac.universal.recon.archive_discovery import ArchiveResurrector
 
         resurrector = ArchiveResurrector()
         meta = resurrector._extract_metadata_html(_METADATA_HTML_NO_AUTHOR)
@@ -320,7 +320,7 @@ class TestArchiveDiscoveryMetadataExtraction:
 
     def test_malformed_html_no_crash(self, malformed_html: str) -> None:
         """Malformed HTML must not raise; empty or partial dict is acceptable."""
-        from intelligence.archive_discovery import ArchiveResurrector
+        from hledac.universal.recon.archive_discovery import ArchiveResurrector
 
         resurrector = ArchiveResurrector()
         meta = resurrector._extract_metadata_html(malformed_html)
@@ -328,7 +328,7 @@ class TestArchiveDiscoveryMetadataExtraction:
 
     def test_empty_html_returns_empty_dict(self) -> None:
         """Empty HTML returns empty dict, not an exception."""
-        from intelligence.archive_discovery import ArchiveResurrector
+        from hledac.universal.recon.archive_discovery import ArchiveResurrector
 
         resurrector = ArchiveResurrector()
         meta = resurrector._extract_metadata_html("")
@@ -336,7 +336,7 @@ class TestArchiveDiscoveryMetadataExtraction:
 
     def test_no_meta_tags_returns_empty_dict(self) -> None:
         """HTML with no meta tags returns empty dict (title only if found)."""
-        from intelligence.archive_discovery import ArchiveResurrector
+        from hledac.universal.recon.archive_discovery import ArchiveResurrector
 
         resurrector = ArchiveResurrector()
         meta = resurrector._extract_metadata_html("<html><body>Plain text</body></html>")

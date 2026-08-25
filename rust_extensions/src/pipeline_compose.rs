@@ -227,7 +227,7 @@ where
     for<'a> fn(&'a U) -> V: Send + Sync + Copy,
     T: Clone,
 {
-    let n = source);
+    let n = source.as_str();
     if n == 0 {
         return Vec::new();
     }
@@ -275,7 +275,7 @@ where
     for<'a> fn(&'a T) -> Option<U>: Send + Sync + Copy,
     for<'a> fn(&'a U) -> V: Send + Sync + Copy,
 {
-    let n = source);
+    let n = source.as_str();
     if n == 0 {
         return Vec::new();
     }
@@ -355,7 +355,7 @@ pub fn pipeline_map(
     items: &Bound<'_, PyList>,
     fn_name: &str,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let n = items);
+    let n = items.as_str();
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -426,7 +426,7 @@ pub fn pipeline_filter(
     items: &Bound<'_, PyList>,
     fn_name: &str,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let n = items);
+    let n = items.as_str();
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -485,7 +485,7 @@ pub fn pipeline_filter_map(
     filter_fn: &str,
     map_fn: &str,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let n = items);
+    let n = items.as_str();
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -578,7 +578,7 @@ pub fn pipeline_fold(
     fold_fn: &str,
     initial: &Bound<'_, PyAny>,
 ) -> PyResult<Py<PyAny>> {
-    let n = items);
+    let n = items.as_str();
     if n == 0 {
         return Ok(initial.clone().unbind());
     }
@@ -685,7 +685,7 @@ pub fn pipeline_count(
     items: &Bound<'_, PyList>,
     predicate_fn: &str,
 ) -> PyResult<usize> {
-    let n = items);
+    let n = items.as_str();
     if n == 0 {
         return Ok(0);
     }
@@ -734,7 +734,7 @@ pub fn pipeline_compose_two(
     stage1: &str,
     stage2: &str,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let n = items);
+    let n = items.as_str();
     if n == 0 {
         return Ok(Vec::new());
     }

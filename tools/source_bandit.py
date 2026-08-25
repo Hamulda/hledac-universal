@@ -15,11 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    import orjson as _json
-except ImportError:
-    import json as _json
+_json = lazy_import("orjson", default=lazy_import("json"))
 _LMDB_ROOT = None
 _open_lmdb = None
 logger = logging.getLogger(__name__)

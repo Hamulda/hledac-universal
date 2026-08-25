@@ -39,6 +39,7 @@ from typing import Any
 
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
+from hledac.universal.utils.optional_imports import lazy_import
 
 try:
     import orjson
@@ -52,10 +53,7 @@ try:
     LMDB_AVAILABLE = True
 except ImportError:
     LMDB_AVAILABLE = False
-try:
-    from hledac.universal.utils.lmdb_bulk import putmulti_bounded
-except ImportError:
-    putmulti_bounded = None
+putmulti_bounded = lazy_import("hledac.universal.utils.lmdb_bulk:putmulti_bounded", default=None)
 
 # S-01: Import UnifiedLMDB for memory manager migration
 try:
@@ -301,25 +299,25 @@ class MemoryManager:
             List of keys in session
         """
         async with self._lock:
-            try:
-                keys = []
-                prefix = f"session:{session_id}:".encode()
-                # buffers=True for zero-copy reads, consistent with get() optimization
-                with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
-                    cursor = txn.cursor()
-                    cursor.set_range(prefix)
-                    while True:
-                        key = cursor.key()
-                        if key is None or not key.startswith(prefix):
-                            break
-                        # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
-                        key_part = key[len(prefix) :].decode("utf-8")
-                        keys.append(key_part)
-                        cursor.next()
-                return keys
-            except Exception as e:
-                logger.error(f"MemoryManager get_session_keys failed: {e}")
-                return []
+            return self._get_session_keys_unlocked(session_id)
+
+    def _get_session_keys_unlocked(self, session_id: str) -> list[str]:
+        """Lock-free variant — caller must hold ``self._lock``."""
+        keys = []
+        prefix = f"session:{session_id}:".encode()
+        # buffers=True for zero-copy reads, consistent with get() optimization
+        with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
+            cursor = txn.cursor()
+            cursor.set_range(prefix)
+            while True:
+                key = cursor.key()
+                if key is None or not key.startswith(prefix):
+                    break
+                # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
+                key_part = key[len(prefix) :].decode("utf-8")
+                keys.append(key_part)
+                cursor.next()
+        return keys
 
     async def get_session_history(self, session_id: str, limit: int = 100) -> list[dict]:
         """
@@ -359,18 +357,22 @@ class MemoryManager:
             True if successful, False otherwise
         """
         async with self._lock:
-            try:
-                keys = await self.get_session_keys(session_id)
-                with self._env.begin(write=True, db=self._sub_db) as txn:
-                    for key in keys:
-                        full_key = self._make_session_key(session_id, key)
-                        txn.delete(full_key)
-                    session_index_key = self._make_session_index_key(session_id)
-                    txn.delete(session_index_key)
-                return True
-            except Exception as e:
-                logger.error(f"MemoryManager clear_session failed: {e}")
-                return False
+            return self._clear_session_unlocked(session_id)
+
+    def _clear_session_unlocked(self, session_id: str) -> bool:
+        """Lock-free variant — caller must hold ``self._lock``."""
+        try:
+            keys = self._get_session_keys_unlocked(session_id)
+            with self._env.begin(write=True, db=self._sub_db) as txn:
+                for key in keys:
+                    full_key = self._make_session_key(session_id, key)
+                    txn.delete(full_key)
+                session_index_key = self._make_session_index_key(session_id)
+                txn.delete(session_index_key)
+            return True
+        except Exception as e:
+            logger.error(f"MemoryManager clear_session failed: {e}")
+            return False
 
     async def list_sessions(self) -> list[str]:
         """
@@ -380,25 +382,25 @@ class MemoryManager:
             List of session IDs
         """
         async with self._lock:
-            try:
-                sessions = []
-                prefix = b"sessions:"
-                # buffers=True for zero-copy reads, consistent with other read paths
-                with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
-                    cursor = txn.cursor()
-                    cursor.set_range(prefix)
-                    while True:
-                        key = cursor.key()
-                        if key is None or not key.startswith(prefix):
-                            break
-                        # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
-                        session_id = key[len(prefix) :].decode("utf-8")
-                        sessions.append(session_id)
-                        cursor.next()
-                return sessions
-            except Exception as e:
-                logger.error(f"MemoryManager list_sessions failed: {e}")
-                return []
+            return self._list_sessions_unlocked()
+
+    def _list_sessions_unlocked(self) -> list[str]:
+        """Lock-free variant — caller must hold ``self._lock``."""
+        sessions = []
+        prefix = b"sessions:"
+        # buffers=True for zero-copy reads, consistent with other read paths
+        with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
+            cursor = txn.cursor()
+            cursor.set_range(prefix)
+            while True:
+                key = cursor.key()
+                if key is None or not key.startswith(prefix):
+                    break
+                # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
+                session_id = key[len(prefix) :].decode("utf-8")
+                sessions.append(session_id)
+                cursor.next()
+        return sessions
 
     async def cleanup_old_sessions(self) -> int:
         """
@@ -409,7 +411,7 @@ class MemoryManager:
         """
         async with self._lock:
             try:
-                sessions = await self.list_sessions()
+                sessions = self._list_sessions_unlocked()
                 now = time.time()
                 ttl_seconds = self._session_ttl_days * 24 * 3600
 
@@ -440,7 +442,7 @@ class MemoryManager:
                 if expired_session_ids:
                     for session_id in expired_session_ids:
                         try:
-                            await self.clear_session(session_id)
+                            self._clear_session_unlocked(session_id)
                             removed += 1
                         except Exception:
                             continue

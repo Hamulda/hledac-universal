@@ -504,7 +504,7 @@ pub fn apply_affinity_for_workload(workload: WorkloadType) {
     }
 
     // Also set perf-level hint for explicit P/E preference
-    let prefer_pcore = workload);
+    let prefer_pcore = workload.clone();
     apply_darwin_affinity_hint(prefer_pcore);
 }
 

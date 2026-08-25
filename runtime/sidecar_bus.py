@@ -35,10 +35,7 @@ import orjson
 
 from compat.msgspec_gc_compat import Struct
 
-try:
-    from hledac.universal.utils.source_types import SourceType as _SourceType
-except ImportError:
-    _SourceType = None
+_SourceType = lazy_import("hledac.universal.utils.source_types:SourceType", default=None)
 import logging
 import time as _time
 from collections.abc import Callable
@@ -238,8 +235,8 @@ async def _identity_stitching_runner(findings: list, store: DuckDBShadowStore, q
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intel.entity_signal_extractor import extract_entities_from_findings_async
-        from hledac.universal.intel.identity_stitching_canonical import create_identity_stitching_adapter
+        from hledac.universal.recon.entity_signal_extractor import extract_entities_from_findings_async
+        from hledac.universal.recon.identity_stitching_canonical import create_identity_stitching_adapter
     except Exception:
         return None
     try:
@@ -261,7 +258,7 @@ async def _pattern_mining_runner(findings: list, store: DuckDBShadowStore, query
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intel.pattern_mining_canonical import create_pattern_mining_adapter
+        from hledac.universal.recon.pattern_mining_canonical import create_pattern_mining_adapter
     except Exception:
         return None
     try:
@@ -383,7 +380,7 @@ async def _wayback_diff_runner(findings: list, store: DuckDBShadowStore, query: 
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
+        from hledac.universal.recon.wayback_diff_miner import WaybackDiffMiner
     except Exception:
         return None
     try:
@@ -417,7 +414,7 @@ async def _social_identity_surface_runner(findings: list, store: DuckDBShadowSto
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intel.social_identity_miner import create_social_identity_miner_adapter
+        from hledac.universal.recon.social_identity_miner import create_social_identity_miner_adapter
     except Exception:
         return None
     try:
@@ -433,7 +430,7 @@ async def _kill_chain_tagging_runner(findings: list, store: DuckDBShadowStore, q
     if not findings or store is None:
         return None
     try:
-        from hledac.universal.intel.kill_chain_tagger import create_kill_chain_tagger
+        from hledac.universal.recon.kill_chain_tagger import create_kill_chain_tagger
     except Exception:
         return None
     try:
@@ -502,7 +499,7 @@ async def _embedding_runner(findings: list, store: DuckDBShadowStore, query: str
         )
         return 0
     try:
-        from hledac.universal.intel.streaming_embedder import StreamingEmbedder
+        from hledac.universal.recon.streaming_embedder import StreamingEmbedder
     except Exception:
         _sidecarlogger.debug("embedding_runner: StreamingEmbedder import failed")
         return 0
@@ -737,7 +734,7 @@ async def _ipv6_recon_runner(findings: list, store: DuckDBShadowStore, query: st
 
 async def _network_intel_runner(findings: list, store: DuckDBShadowStore, query: str) -> int | None:
     """F247B: Active network reconnaissance via NetworkReconnaissance + bridge."""
-    from hledac.universal.intel.network_reconnaissance import NetworkReconnaissance
+    from hledac.universal.recon.network_reconnaissance import NetworkReconnaissance
     from hledac.universal.runtime.source_finding_bridge import network_recon_result_to_findings
 
     return await _net_recon_runner(
@@ -774,40 +771,41 @@ async def _gopher_crawl_runner(findings: list, store: DuckDBShadowStore, query: 
 
 
 from hledac.universal.runtime.sidecar_runner_decorator import sidecar_runner, sidecar_runner_await
+from hledac.universal.utils.optional_imports import lazy_import
 
 _ExposureCorrelatorRunner = sidecar_runner(
     name="exposure_correlator",
-    module_path="hledac.universal.intel.exposure_correlator",
+    module_path="hledac.universal.recon.exposure_correlator",
     factory_name="create_exposure_correlator_adapter",
     correlate_method="correlate",
 )
 _LeakSentinelRunner = sidecar_runner(
     name="leak_sentinel",
-    module_path="hledac.universal.intel.leak_sentinel",
+    module_path="hledac.universal.recon.leak_sentinel",
     factory_name="create_leak_sentinel_adapter",
     correlate_method="scan",
 )
 _TemporalArchaeologyRunner = sidecar_runner(
     name="temporal_archaeology",
-    module_path="hledac.universal.intel.temporal_archaeologist_adapter",
+    module_path="hledac.universal.recon.temporal_archaeologist_adapter",
     factory_name="create_temporal_archaeologist_adapter",
     correlate_method="synthesize_timeline",
 )
 _PassiveFingerprintRunner = sidecar_runner(
     name="passive_fingerprint",
-    module_path="hledac.universal.intel.passive_fingerprint",
+    module_path="hledac.universal.recon.passive_fingerprint",
     factory_name="create_passive_fingerprint_adapter",
     correlate_method="correlate",
 )
 _RirCorrelatorRunner = sidecar_runner_await(
     name="rir_correlator",
-    module_path="hledac.universal.intel.rir_correlator",
+    module_path="hledac.universal.recon.rir_correlator",
     factory_name="create_rir_correlator_adapter",
     correlate_method="async_correlate",
 )
 _PassiveTechStackRunner = sidecar_runner(
     name="passive_tech_stack",
-    module_path="hledac.universal.intel.passive_fingerprint",
+    module_path="hledac.universal.recon.passive_fingerprint",
     factory_name="create_passive_tech_stack_adapter",
     correlate_method="correlate",
 )

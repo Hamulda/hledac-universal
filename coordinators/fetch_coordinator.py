@@ -23,6 +23,7 @@ import re
 import secrets
 import socket
 import time
+import threading
 from collections import deque
 from collections.abc import Callable
 from operator import attrgetter
@@ -188,8 +189,16 @@ HINTS_AVAILABLE = CAPS.is_available("deep_web_hints")
 
 _ZERO_ATTR_ENGINE = _zero_attr_cls
 
-_COVER_RATE = min(max(FeatureFlags.get_float(FeatureFlag.COVER_TRAFFIC_RATE, 0.05), 0.0), 1.0)
-_COVER_MAX = 2
+# ── L1: cover-traffic tuning knobs ─────────────────────────────────────────────
+# Both are registered in _core.feature_flags.FeatureFlag and clamped: cover
+# traffic allocates a full extra fetch (~4 MB peak each on M1 8GB), so the
+# per-sprint fire count needs a hard upper bound regardless of operator input.
+_COVER_RATE_DEFAULT = 0.05
+_COVER_MAX_DEFAULT = 2
+_COVER_MAX_CEILING = 16
+
+_COVER_RATE = min(max(FeatureFlags.get_float(FeatureFlag.COVER_TRAFFIC_RATE, _COVER_RATE_DEFAULT), 0.0), 1.0)
+_COVER_MAX = min(max(FeatureFlags.get_int(FeatureFlag.COVER_TRAFFIC_MAX, _COVER_MAX_DEFAULT), 0), _COVER_MAX_CEILING)
 
 
 # T2: Fast URL host/path extraction — zero allocation, no httpx.URL parse.
@@ -269,7 +278,42 @@ _rust_tls_available: bool = False  # Set once at module load
 
 # A11 OPTIMIZATION: TLS metadata cache (host:port -> metadata)
 # Certificate rarely changes, so cache with short TTL to avoid repeated connections
-_tls_cache: TTLCache[tuple[str, int], dict[str, Any]] = TTLCache(maxsize=1024, ttl=300)  # 5 min TTL
+# M6 FIX: async/thread-safe TTL cache (serialized behind a threading.Lock)
+class AsyncSafeTTLCache:
+    """Thread- and coroutine-safe TTL cache.
+
+    cachetools.TTLCache is internally lock-protected, but its read-modify-write
+    patterns can interleave across coroutines / asyncio.to_thread() workers. This
+    wrapper serializes every access so all operations are atomic for callers.
+    """
+    __slots__ = ("_cache", "_lock")
+
+    def __init__(self, maxsize: int, ttl: float) -> None:
+        self._cache: TTLCache = TTLCache(maxsize=maxsize, ttl=ttl)
+        self._lock = threading.Lock()
+
+    def get(self, key, default=None):
+        with self._lock:
+            return self._cache.get(key, default)
+
+    def __getitem__(self, key):
+        with self._lock:
+            return self._cache[key]
+
+    def __setitem__(self, key, value) -> None:
+        with self._lock:
+            self._cache[key] = value
+
+    def __contains__(self, key) -> bool:
+        with self._lock:
+            return key in self._cache
+
+    def clear(self) -> None:
+        with self._lock:
+            self._cache.clear()
+
+
+_tls_cache: AsyncSafeTTLCache = AsyncSafeTTLCache(maxsize=1024, ttl=300)  # 5 min TTL
 
 
 def _init_rust_tls_availability() -> bool:
@@ -675,6 +719,28 @@ async def _batch_tls_fallback(
             results[cache_key] = result
 
 
+# ── L1: inline TokenBucketController fallback defaults ─────────────────────────
+# Mirror the stealth_manager implementation's profile: 5 req/s sustained with a
+# burst capacity of 10. Registered in _core.feature_flags.FeatureFlag so the
+# fallback path is tunable instead of silently diverging from the real manager.
+_TOKEN_BUCKET_RATE_DEFAULT = 5
+_TOKEN_BUCKET_CAPACITY_DEFAULT = 10
+_TOKEN_BUCKET_RATE_CEILING = 100  # >100 req/s saturates the M1 8GB fetch budget
+
+_TOKEN_BUCKET_RATE = min(
+    max(FeatureFlags.get_int(FeatureFlag.TOKEN_BUCKET_RATE, _TOKEN_BUCKET_RATE_DEFAULT), 1),
+    _TOKEN_BUCKET_RATE_CEILING,
+)
+# Capacity must never drop below rate, otherwise a full second of tokens cannot
+# be buffered and the bucket degrades into a hard serializer.
+_TOKEN_BUCKET_CAPACITY = min(
+    max(
+        FeatureFlags.get_int(FeatureFlag.TOKEN_BUCKET_CAPACITY, _TOKEN_BUCKET_CAPACITY_DEFAULT),
+        _TOKEN_BUCKET_RATE,
+    ),
+    _TOKEN_BUCKET_RATE_CEILING * 2,
+)
+
 _stealth_tbc = CAPS.require(STEALTH_MANAGER)
 if _stealth_tbc is None:
 
@@ -683,7 +749,7 @@ if _stealth_tbc is None:
 
         __slots__ = ("_rate", "_capacity", "_tokens", "_last_refill", "_cond")
 
-        def __init__(self, rate: int = 5, capacity: int = 10) -> None:
+        def __init__(self, rate: int = _TOKEN_BUCKET_RATE, capacity: int = _TOKEN_BUCKET_CAPACITY) -> None:
             self._rate = rate
             self._capacity = capacity
             self._tokens = capacity
@@ -1152,8 +1218,6 @@ class SpeculativePrefetcher:
         Returns:
             SpeculativePrefetchResult with prefetch URLs and stats
         """
-        import time
-
         start = time.monotonic()
 
         if not self._available or not self._link_predictor:
@@ -1243,32 +1307,67 @@ class SpeculativePrefetcher:
         hosts = list({_fast_url_host(u) for u in urls if _fast_url_host(u)})
         results: dict[str, list[str]] = {}
 
+        # M-2026-FIX: previously iterated serially through `for host in hosts`
+        # awaiting one DNS lookup at a time. Now we batch the Rust DNS call
+        # (single prefetch() with N hosts) and fall back to a bounded parallel
+        # socket.getaddrinfo fan-out via asyncio.gather if needed.
+        if not hosts:
+            return results
+
+        # 1) Cache hits resolve immediately.
+        cache_misses: list[str] = []
         for host in hosts:
             if host in self._dns_cache:
                 results[host] = self._dns_cache[host]
-                continue
+            else:
+                cache_misses.append(host)
 
-            # Use Rust DNS if available
-            if self._rust_dns_enabled:
-                try:
-                    ips = await self._rust_dns.prefetch([host])
-                    if host in ips:
-                        results[host] = ips[host]
-                        self._dns_cache[host] = ips[host]
-                        continue
-                except Exception:
-                    pass
+        if not cache_misses:
+            return results
 
-            # Fallback to socket
+        # 2) Rust DNS batch call (single acquire on resolver).
+        rust_resolved = False
+        if self._rust_dns_enabled:
             try:
-                import socket
+                ips_map = await self._rust_dns.prefetch(cache_misses)
+                if ips_map:
+                    for host in cache_misses:
+                        ips = ips_map.get(host)
+                        if ips:
+                            results[host] = ips
+                            self._dns_cache[host] = ips
+                        else:
+                            results[host] = []
+                    rust_resolved = True
+            except Exception:
+                pass
 
-                results_list = socket.getaddrinfo(host, 0)
-                ips = sorted({r[4][0] for r in results_list})
-                results[host] = ips
-                self._dns_cache[host] = ips
-            except socket.gaierror, OSError:
-                results[host] = []
+        if rust_resolved:
+            return results
+
+        # 3) Fallback to asyncio.gather(getaddrinfo, ...) bounded semaphore.
+        try:
+            import socket
+
+            sem = asyncio.Semaphore(8)
+            import traceback  # noqa: F401  (kept for future debug hook)
+
+            async def _resolve(host: str) -> None:
+                async with sem:
+                    try:
+                        # Run blocking getaddrinfo in default executor.
+                        loop = asyncio.get_running_loop()
+                        results_list = await loop.getaddrinfo(host, 0)
+                        ips = sorted({r[4][0] for r in results_list})
+                        results[host] = ips
+                        self._dns_cache[host] = ips
+                    except (socket.gaierror, OSError):
+                        results[host] = []
+
+            await asyncio.gather(*[_resolve(h) for h in cache_misses], return_exceptions=True)
+        except Exception:
+            for host in cache_misses:
+                results.setdefault(host, [])
 
         return results
 
@@ -1701,17 +1800,10 @@ class FetchCoordinator(UniversalCoordinator):
             new_window = self._aimd.blitz_boost(_target)
         else:
             new_window = await self._aimd.blitz_boost(_target)
-        # H8 FIX: Protect semaphore _value read-modify-write with lock to prevent race conditions
-        async with self._aimd_state_lock:
-            # Sync semaphore to new window
-            # P4-3 FIX: Only increase permits when window grows. When window shrinks,
-            # do nothing - releasing permits makes backpressure worse by allowing MORE
-            # concurrent operations. The semaphore naturally limits new acquires.
-            _diff = int(new_window) - self._aimd_semaphore._value
-            if _diff > 0:
-                for _ in range(_diff):
-                    self._aimd_semaphore.release()
-            # P4-3 FIX: Removed elif _diff < 0 branch - don't release permits when shrinking
+        # H8 FIX: Grow semaphore to the new window via monotonic accounting.
+        # Eliminates the unsafe _value read-modify-write (TOCTOU) entirely — we
+        # never read semaphore._value, so concurrent acquire()/release() can't race.
+        await self._grow_aimd_semaphore_to(new_window)
         self._telemetry["aimd_concurrency"] = new_window
         self._blitz_mode = True
         logger.info("[BLITZ-13] blitz_boost: window → %d (target=%d)", int(new_window), int(_target))
@@ -2213,8 +2305,8 @@ class FetchCoordinator(UniversalCoordinator):
                 bp_result = self._concurrency_provider()
                 if bp_result is not None:
                     bp_clearing, _, bp_uma_state, _ = bp_result
-             except (TypeError, ValueError, KeyError):  # noqa: BLE001
-                 pass
+            except (TypeError, ValueError, KeyError):  # noqa: BLE001
+                pass
         return bp_clearing, bp_uma_state
 
     async def _apply_governor_backpressure(
@@ -2244,6 +2336,23 @@ class FetchCoordinator(UniversalCoordinator):
             self._telemetry["backpressure_clamp_events"] += 1
         return current_window
 
+    async def _grow_aimd_semaphore_to(self, target: float) -> None:
+        """Idempotently grow the AIMD semaphore to at least ``target`` permits.
+
+        H8 FIX (robust): replaces the unsafe ``asyncio.Semaphore._value``
+        read-modify-write. A private monotonic ``_aimd_permits_provisioned``
+        counter is the single source of truth for provisioned capacity, so the
+        reconcile cannot suffer a TOCTOU against concurrent ``acquire()``/
+        ``release()``. Serialized by ``_aimd_state_lock`` so parallel growers
+        never double-count. Only ever grows (P4-3): AIMD decreases are enforced
+        by the controller on the acquire side, not by shrinking the semaphore.
+        """
+        target = max(0, int(target))
+        async with self._aimd_state_lock:
+            while self._aimd_permits_provisioned < target:
+                self._aimd_semaphore.release()
+                self._aimd_permits_provisioned += 1
+
     async def _sync_semaphore_to_window(self, current_window: float) -> None:
         """Sync semaphore permits to match current window.
 
@@ -2255,18 +2364,9 @@ class FetchCoordinator(UniversalCoordinator):
         complete and release their permits. New acquires wait when window is
         smaller than the semaphore's current permits.
         """
-        # H8 FIX: Protect semaphore _value read-modify-write with lock to prevent race conditions
-        async with self._aimd_state_lock:
-            if current_window == self._aimd_semaphore._value:
-                return
-            diff = int(current_window) - self._aimd_semaphore._value
-            if diff > 0:
-                for _ in range(diff):
-                    self._aimd_semaphore.release()
-            # P4-3 FIX: Removed elif diff < 0 branch. When window shrinks,
-            # we must NOT release permits - that would make backpressure worse.
-            # The semaphore value stays higher, naturally limiting new acquires
-            # until running tasks complete and release normally.
+        # H8 FIX: Grow via monotonic accounting (no _value reads). See
+        # _grow_aimd_semaphore_to for the TOCTOU-free rationale. P4-3: only grows.
+        await self._grow_aimd_semaphore_to(current_window)
 
     async def _acquire_python_slot(self, bp_clearing: float | None) -> float:
         """Acquire slot using Python AIMDWindow + semaphore."""
@@ -2385,7 +2485,7 @@ class FetchCoordinator(UniversalCoordinator):
         else:
             # Python fallback
             new_window, new_failures = await self._aimd.on_failure(uma_state=uma_state)
-            if new_window != self._aimd_semaphore._value:
+            if new_window != self._aimd_permits_provisioned:
                 logger.warning(
                     f"[AIMD] failure #{new_failures} uma_state={uma_state} factor={decrease_factor} → window→{new_window:.1f}"
                 )
@@ -2840,6 +2940,36 @@ class FetchCoordinator(UniversalCoordinator):
         result = await self.step({"decision": decision})
         return result
 
+
+    async def fetch(self, work: str | dict[str, Any], timeout: float = 30.0) -> dict[str, Any] | None:
+        """
+        ISSUE #1 FIX: Thin fetch() wrapper for callers that expect this API.
+
+        Dispatches to _fetch_url_impl() which is the actual implementation.
+
+        Args:
+            work: URL string or dict with "url" key (legacy interface)
+            timeout: Unused but kept for API compatibility with callers like
+                     dark_web_intelligence._fetch_image_bytes that pass timeout=8.0
+        Returns:
+            Fetch result dict with "body", "status_code", etc. or None on error.
+        """
+        try:
+            url: str
+            if isinstance(work, str):
+                url = work
+            elif isinstance(work, dict):
+                url = work.get("url", "") or work.get("work", {}).get("url", "")
+            else:
+                return None
+
+            if not url:
+                return None
+
+            return await self._fetch_url_impl(url, attempt=0)
+        except Exception:
+            return None
+
     async def _do_initialize(self) -> bool:
         """Initialize coordinator."""
         logger.info("FetchCoordinator initialized")
@@ -3258,8 +3388,8 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 _result = self._concurrency_provider()
                 self._batch_cp_result = _result if _result is not None else _CP_RETURNED_NONE
-             except (TypeError, ValueError):  # noqa: BLE001
-                 pass
+            except(TypeError, ValueError):  # noqa: BLE001
+                pass
 
         def _extract_raw_hosts() -> set[str]:
             """Extract unique hosts from raw batch (sync, fast — runs in thread pool)."""
@@ -3586,8 +3716,17 @@ class FetchCoordinator(UniversalCoordinator):
                     evidence_ids.append(evidence_id)
                     self._evidence_ids.append(evidence_id)
                     if self._evidence_sink is not None:
-                        with contextlib.suppress(Exception):
-                            self._evidence_sink.append_evidence(evidence_id)
+                        # E4 FIX: append_evidence is a coroutine — schedule it.
+                        # Previously it was invoked without await, so the
+                        # coroutine was created but never run and evidence was
+                        # silently never persisted to the sink.
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(
+                                self._evidence_sink.append_evidence(evidence_id)
+                            )
+                        except RuntimeError:
+                            pass
                     _entity_host = _fast_url_host(url)
                     if _entity_host:
                         self.report_entity_discovery(_entity_host, "domain")
@@ -3661,7 +3800,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 # Fire-and-forget: don't block on TLS fingerprinting
                 # Cache will be populated in background for future fetches
-                asyncio.create_task(batch_tls_fingerprint(raw_batch, timeout_ms=5000, alpn=["h2", "http/1.1"]))
+                safe_create_task(batch_tls_fingerprint(raw_batch, timeout_ms=5000, alpn=["h2", "http/1.1"]))
                 # Don't await — let it run in background while other phases proceed
                 # Result is best-effort; individual fetches will get TLS if not cached
                 self._telemetry["tls_batch_initiated"] = len(raw_batch)
@@ -4517,7 +4656,7 @@ class FetchCoordinator(UniversalCoordinator):
         Returns:
             List of fused search results, or None if feature is disabled/error
         """
-        if os.environ.get("GHOST_DEEP_RESEARCH") != "1":
+        if os.environ.get("HLEDAC_DEEP_RESEARCH", os.environ.get("GHOST_DEEP_RESEARCH")) != "1":
             return None
         try:
             from ..tools.ddgs_client import search_news_sync, search_text_sync
@@ -4666,8 +4805,8 @@ class FetchCoordinator(UniversalCoordinator):
         """Probabilistically fire cover traffic after a successful real fetch.
 
         Pattern: probabilistic inline injection (not background task — too complex for M1).
-        Rate: HLEDAC_COVER_TRAFFIC_RATE (default 0.15 = 15% chance per success).
-        Limit: max _COVER_MAX fires per sprint (M1 RAM protection).
+        Rate: HLEDAC_COVER_TRAFFIC_RATE (default 0.05 = 5% chance per success).
+        Limit: HLEDAC_COVER_TRAFFIC_MAX fires per sprint (default 2, M1 RAM protection).
         Transport: MUST use identical transport as real request (Tor→Tor, clearnet→clearnet).
 
         Cover traffic URL goes to DuckDB via _cover_traffic_sink flag on CanonicalFinding.
@@ -5990,9 +6129,8 @@ class FetchCoordinator(UniversalCoordinator):
 
     async def _handle_ct(self, entity_id: str) -> list[str]:
         """Handle Certificate Transparency protocol."""
-        import httpx
-
         from hledac.universal.paths import CACHE_ROOT
+        from hledac.universal.transport.client_pool import get_or_create_httpx_client
 
         from ..recon.ct_log_client import CTLogClient
 
@@ -6001,12 +6139,15 @@ class FetchCoordinator(UniversalCoordinator):
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         client = CTLogClient(cache_dir=cache_dir)
-        async with httpx.AsyncClient() as session:
-            results = await client.search(entity_id, session)
-            for result in results:
-                if isinstance(result, dict) and "san_names" in result:
-                    for san_name in result["san_names"][:5]:
-                        evidence_ids.append(f"ct:{entity_id}:{san_name}")
+        # ISSUE #8: shared pooled client — CT log queries hit a handful of hosts
+        # (crt.sh, Google/Cloudflare logs) repeatedly, so keep-alive + HTTP/2
+        # multiplexing matter. Must NOT be closed here [CP-4].
+        session = await get_or_create_httpx_client("clearnet")
+        results = await client.search(entity_id, session)
+        for result in results:
+            if isinstance(result, dict) and "san_names" in result:
+                for san_name in result["san_names"][:5]:
+                    evidence_ids.append(f"ct:{entity_id}:{san_name}")
         return evidence_ids
 
     async def _handle_passive_dns(self, entity_id: str) -> list[str]:
@@ -6168,16 +6309,18 @@ class FetchCoordinator(UniversalCoordinator):
 
     async def _handle_commoncrawl(self, entity_id: str) -> list[str]:
         """Handle CommonCrawl protocol."""
-        import httpx
+        from hledac.universal.transport.client_pool import get_or_create_httpx_client
 
         evidence_ids = []
         if FeatureFlags.get(FeatureFlag.COMMONCRAWL):
             cc_url = f"http://index.commoncrawl.org/CC-MAIN-2024-10-index?url={entity_id}&output=json"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(cc_url)
-                if resp.status_code == 200:
-                    for line in resp.text.strip().split("\n")[:5]:
-                        evidence_ids.append(f"commoncrawl:{entity_id}:{line[:80]}")
+            # ISSUE #8: shared pooled client; the former per-call 10s timeout is
+            # preserved as a per-request override instead of a new client.
+            client = await get_or_create_httpx_client("clearnet")
+            resp = await client.get(cc_url, timeout=10.0)
+            if resp.status_code == 200:
+                for line in resp.text.strip().split("\n")[:5]:
+                    evidence_ids.append(f"commoncrawl:{entity_id}:{line[:80]}")
         else:
             logger.debug("[UNIFIED-004] CommonCrawl skipped for %s (HLEDAC_ENABLE_COMMONCRAWL=0)", entity_id)
         return evidence_ids

@@ -22,15 +22,10 @@ from typing import Any
 
 from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
 from hledac.universal.utils.asyncx import safe_wait_for
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    import orjson
-except ImportError:
-    orjson = None
-try:
-    import dspy
-except ImportError:
-    dspy = None
+orjson = lazy_import("orjson", default=None)
+dspy = lazy_import("dspy", default=None)
 logger = logging.getLogger("dspy_service")
 ENABLED = os.getenv("HLEDAC_ENABLE_DSPY", "0") == "1"
 CACHE_PATH = Path.home() / ".hledac" / "dspy_cache.json"

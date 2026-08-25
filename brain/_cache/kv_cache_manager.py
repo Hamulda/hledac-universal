@@ -27,7 +27,6 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.lru_cache import LRUCache
-if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _KVCacheValue = tuple[Any, int, float]
 
@@ -75,7 +74,7 @@ class KVCacheEvictor:
         """Evict oldest `count` items from KV pool."""
         for _ in range(min(count, len(self._kv_pool))):
             try:
-                self._kv_pool.pop((oldest := True))
+                self._kv_pool.pop(oldest := True)
             except KeyError:
                 break
 

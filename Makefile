@@ -134,6 +134,11 @@ audit-ci:
 	$(PYTHON) -m tools.audit.ci_root_scripts_guard
 	$(PYTHON) -m tools.audit.ci_tst001_guard
 	$(PYTHON) tools/audit/ban_stdlib_json.py || exit 1
+	$(PYTHON) tools/audit/ban_bak_artifacts.py
+	$(PYTHON) tools/audit/ban_asyncio_run_in_loop.py
+	$(PYTHON) tools/audit/ban_unbounded_seen_set.py
+	$(PYTHON) tools/audit/ban_ephemeral_httpx.py
+	$(PYTHON) tools/audit/ban_raw_gather.py
 
 .PHONY: test-ci
 test-ci:
@@ -200,6 +205,10 @@ audit:
 	$(PYTHON) -m tools.audit.codehealth_guard
 	$(PYTHON) -m tools.audit.live_kpi_extraction_guard
 	$(PYTHON) -m tools.audit.live_measurement_extraction_guard
+	$(PYTHON) tools/audit/ban_asyncio_run_in_loop.py
+	$(PYTHON) tools/audit/ban_unbounded_seen_set.py
+	$(PYTHON) tools/audit/ban_ephemeral_httpx.py
+	$(PYTHON) tools/audit/ban_raw_gather.py
 
 # =============================================================================
 # Smoke

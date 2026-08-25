@@ -65,7 +65,7 @@ def tiny_nx_graph():
 
 class TestGraphSerdeJsonRoundtrip:
     def test_save_and_load_roundtrip(self, tmp_graphs_dir: Path, tiny_nx_graph) -> None:
-        from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
+        from hledac.universal.recon._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
         out = tmp_graphs_dir / "graph.jsonl"
         ok = save_nx_graph_jsonl(str(out), tiny_nx_graph, max_nodes=10_000)
@@ -86,7 +86,7 @@ class TestGraphSerdeJsonRoundtrip:
         assert a_to_b.get("weight") == 0.9
 
     def test_our_format_detector(self, tmp_graphs_dir: Path, tiny_nx_graph) -> None:
-        from intelligence._graph_serde import (
+        from hledac.universal.recon._graph_serde import (
             is_our_format,
             save_nx_graph_jsonl,
         )
@@ -110,7 +110,7 @@ class TestGraphSerdeJsonRoundtrip:
 class TestGraphSerdeBound:
     def test_prune_on_write_when_over_max(self, tmp_graphs_dir: Path) -> None:
         nx = pytest.importorskip("networkx")
-        from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
+        from hledac.universal.recon._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
         g = nx.Graph()
         for i in range(100):
@@ -127,7 +127,7 @@ class TestGraphSerdeBound:
 
     def test_bound_preserves_edges(self, tmp_graphs_dir: Path) -> None:
         nx = pytest.importorskip("networkx")
-        from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
+        from hledac.universal.recon._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
         g = nx.Graph()
         for i in range(50):
@@ -153,7 +153,7 @@ class TestGraphSerdeLegacyMigration:
         nx = pytest.importorskip("networkx")
         import pickle
 
-        from intelligence._graph_serde import load_nx_graph_jsonl
+        from hledac.universal.recon._graph_serde import load_nx_graph_jsonl
 
         legacy_g = nx.Graph()
         legacy_g.add_node("legacy_a")
@@ -165,7 +165,7 @@ class TestGraphSerdeLegacyMigration:
             pickle.dump(legacy_g, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         # is_our_format must be False (legacy is not our JSON)
-        from intelligence._graph_serde import is_our_format
+        from hledac.universal.recon._graph_serde import is_our_format
 
         assert is_our_format(str(legacy_path)) is False
 
@@ -179,7 +179,7 @@ class TestGraphSerdeLegacyMigration:
         nx = pytest.importorskip("networkx")
         import pickle
 
-        from intelligence._graph_serde import load_nx_graph_jsonl
+        from hledac.universal.recon._graph_serde import load_nx_graph_jsonl
 
         # Make a non-graphs-dir location
         outside = tmp_path / "elsewhere"
@@ -262,7 +262,7 @@ class TestIgraphNativeFormatUnchanged:
 
 class TestGraphSerdeSmoke:
     def test_module_imports_cleanly(self) -> None:
-        import intelligence._graph_serde as mod
+        import hledac.universal.recon._graph_serde as mod
 
         assert mod.save_nx_graph_jsonl is not None
         assert mod.load_nx_graph_jsonl is not None
@@ -270,7 +270,7 @@ class TestGraphSerdeSmoke:
 
     def test_failure_is_soft(self, tmp_graphs_dir: Path, capsys) -> None:
         """save_nx_graph_jsonl with a non-Graph object returns False, no raise."""
-        from intelligence._graph_serde import save_nx_graph_jsonl
+        from hledac.universal.recon._graph_serde import save_nx_graph_jsonl
 
         # Pass None
         ok = save_nx_graph_jsonl(str(tmp_graphs_dir / "x.jsonl"), None, max_nodes=10)

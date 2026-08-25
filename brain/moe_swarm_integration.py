@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any, Optional
 from .content_router import ContentRouter, classify_content, route_content
 from .micro_model_pool import MicroModelPool, TaskType
 from .micro_model_swarm import MicroModelSwarmRouter, create_swarm_router
-if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 class ResourceGovernor:
@@ -232,7 +231,7 @@ class MoERouterSwarmMixin:
         for mixin classes. This allows the mixin to set up state before
         the parent class initializes.
         """
-        self._swarm_router: Optional[MicroModelSwarmRouter] = None
+        self._swarm_router: MicroModelSwarmRouter | None = None
         self._swarm_lock: asyncio.Lock | None = None
         self._swarm_initialized: bool = False
         super().__init__(*args, **kwargs)
@@ -539,7 +538,7 @@ class MoERouterWithSwarm:
     """
     __slots__ = ('_config', '_content_router', '_enable_swarm', '_expert_usage', '_experts', '_initialized', '_main_model', '_main_tokenizer', '_memory_budget', '_prompt_cache_by_expert', '_swarm_router', '_use_adaptive_budget')
 
-    def __init__(self, config: Optional[Any]=None, enable_swarm: bool=True, memory_budget_mb: int | None=None, use_adaptive_budget: bool=True):
+    def __init__(self, config: Any | None=None, enable_swarm: bool=True, memory_budget_mb: int | None=None, use_adaptive_budget: bool=True):
         """
         Initialize enhanced MoERouter with SWARM support.
         
@@ -554,20 +553,20 @@ class MoERouterWithSwarm:
         self._memory_budget: int | None = memory_budget_mb
         self._use_adaptive_budget = use_adaptive_budget
         self._initialized = False
-        self._swarm_router: Optional[MicroModelSwarmRouter] = None
+        self._swarm_router: MicroModelSwarmRouter | None = None
         self._content_router = ContentRouter()
         self._experts: dict[str, tuple[Any, Any]] = {}
         self._expert_usage: dict[str, int] = {}
         self._prompt_cache_by_expert: dict[str, Any] = {}
-        self._main_model: Optional[Any] = None
-        self._main_tokenizer: Optional[Any] = None
+        self._main_model: Any | None = None
+        self._main_tokenizer: Any | None = None
 
     @property
     def config(self) -> Any:
         """Get router configuration."""
         return self._config
 
-    async def initialize(self, model: Optional[Any]=None, tokenizer: Optional[Any]=None) -> None:
+    async def initialize(self, model: Any | None=None, tokenizer: Any | None=None) -> None:
         """
         Initialize the router and micro-model pool.
         
@@ -612,7 +611,7 @@ class MoERouterWithSwarm:
                     metadata['load_failed'] = True
         return (model_id, task_type, metadata)
 
-    async def generate(self, query: str, model_id: Optional[str]=None, max_tokens: int=256, temp: float=0.7) -> str:
+    async def generate(self, query: str, model_id: str | None=None, max_tokens: int=256, temp: float=0.7) -> str:
         """
         Generate response for query.
         

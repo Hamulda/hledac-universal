@@ -40,7 +40,7 @@
 | Canonical write | `DuckDBShadowStore.async_ingest_findings_batch()` |
 | LMDB metadata | `paths.open_lmdb()` context manager |
 | MLX inference | `Hermes3Engine.generate()` |
-| HTTP fetch | `FetchCoordinator.fetch()` |
+| HTTP fetch | `FetchCoordinatorAdapter.fetch()` (clearnet→public_fetcher, onion/i2p→FetchCoordinatorFacade) |
 | Graph upsert | `DuckPGQGraph.upsert_ioc()` |
 
 ## IOC Extraction — Dual Engine

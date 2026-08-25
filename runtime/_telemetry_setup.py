@@ -293,13 +293,17 @@ def instrument_lmdb_env(env: Any, tracer_name: str = "lmdb") -> Any:
 
                     def commit(self) -> None:
                         self._span.set_attribute("lmdb.commit", True)
-                        self._span.end()
-                        self._txn.commit()
+                        try:
+                            self._txn.commit()
+                        finally:
+                            self._span.end()
 
                     def abort(self) -> None:
                         self._span.set_attribute("lmdb.abort", True)
-                        self._span.end()
-                        self._txn.abort()
+                        try:
+                            self._txn.abort()
+                        finally:
+                            self._span.end()
 
                     def __getattr__(self, name: str) -> Any:
                         return getattr(self._txn, name)

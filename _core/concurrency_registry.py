@@ -616,9 +616,13 @@ class ConcurrencyBudgetRegistry:
         - Uses _get_or_create_lock() which provides ContextVar-based isolation
         - Falls back to process-global lock on Python < 3.14
         """
-        # ROADMAP-003: ContextVar-based lock for per-context isolation
-        lock = _get_or_create_lock("registry.adjust")
-        async with lock:
+        # Process-global lock (NOT ContextVar-scoped): adjust_for_state must be a
+        # single-writer critical section across ALL async tasks. On Python 3.14+
+        # _get_or_create_lock() returns a per-ContextVar lock, so two tasks would
+        # acquire *different* locks → no mutual exclusion → double wholesale swap.
+        if ConcurrencyBudgetRegistry._async_lock is None:
+            ConcurrencyBudgetRegistry._async_lock = asyncio.Lock()
+        async with ConcurrencyBudgetRegistry._async_lock:
             new_state = uma_state.upper()
             if self._uma_state == new_state:
                 return {}

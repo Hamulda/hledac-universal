@@ -53,7 +53,7 @@ _UVLOOP_INSTALLED: bool = sys.modules.get("uvloop") is not None
 
 # eager_start is supported when Python >= 3.12 (stdlib TaskGroup.create_task
 # handles it natively, independent of whether uvloop is installed)
-# Note: This is for asyncio.create_task(). For TaskGroup.create_task(),
+# Note: This is for safe_create_task(). For TaskGroup.create_task(),
 # eager_start always works on Python 3.12+ regardless of uvloop.
 _EAGER_START_SUPPORTED: bool = _PY_312_PLUS
 
@@ -148,7 +148,7 @@ def create_task_with_context(
         asyncio.Task wrapping the coroutine.
 
     Note:
-        When uvloop is installed, asyncio.create_task() may not support eager_start
+        When uvloop is installed, safe_create_task() may not support eager_start
         (C-level limitation). The try/except handles this gracefully.
     """
     captured: dict[str, Any] = {}
@@ -168,12 +168,12 @@ def create_task_with_context(
 
     if should_eager:
         try:
-            task: asyncio.Task[Any] = asyncio.create_task(_otel_wrapped(), name=name, eager_start=True)
+            task: asyncio.Task[Any] = safe_create_task(_otel_wrapped(), name=name, eager_start=True)
         except TypeError:
             # Fallback: uvloop or other event loop doesn't support eager_start
-            task = asyncio.create_task(_otel_wrapped(), name=name)
+            task = safe_create_task(_otel_wrapped(), name=name)
     else:
-        task = asyncio.create_task(_otel_wrapped(), name=name)
+        task = safe_create_task(_otel_wrapped(), name=name)
 
     task_id = id(task)
     _task_context_cache[task_id] = captured if captured else {}
@@ -238,12 +238,12 @@ class TaskContext:
         should_eager = _should_use_eager_start()
         if should_eager:
             try:
-                task: asyncio.Task[Any] = asyncio.create_task(_wrapped(), eager_start=True)
+                task: asyncio.Task[Any] = safe_create_task(_wrapped(), eager_start=True)
             except TypeError:
                 # Fallback: event loop doesn't support eager_start
-                task = asyncio.create_task(_wrapped())
+                task = safe_create_task(_wrapped())
         else:
-            task = asyncio.create_task(_wrapped())
+            task = safe_create_task(_wrapped())
         task_id = id(task)
         _task_context_cache[task_id] = ctx_data
 
@@ -256,7 +256,7 @@ class TaskContext:
 
     @staticmethod
     async def gather(
-        *tasks: asyncio.Task[Any], timeout: float | None = None, return_exceptions: bool = False
+        *tasks: asyncio.Task[Any], timeout: float | None = None, return_exceptions: bool = True
     ) -> list[Any]:
         """Await multiple tasks, propagating context to all."""
         if timeout is not None:

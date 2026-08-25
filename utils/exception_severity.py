@@ -47,8 +47,6 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 from collections.abc import Callable
 
-if TYPE_CHECKING:
-
 __all__ = [
     "Severity",
     "ExceptionEvent",
@@ -510,7 +508,7 @@ class SeverityConfig:
     p4_refill_rate: float = 0.5
 
     @classmethod
-    def from_env(cls) -> "SeverityConfig":
+    def from_env(cls) -> SeverityConfig:
         """Load configuration from environment variables."""
         import os
         return cls(

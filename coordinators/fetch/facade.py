@@ -27,7 +27,10 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+
+import httpx
 import time
 from collections import deque
 from collections.abc import Callable
@@ -258,7 +261,7 @@ class FetchCoordinatorFacade:
 
             return await self._postfetch_phase(url, domain, transport_name, start_time, fetch_result, options)
 
-        except Exception as e:
+        except (TimeoutError, OSError, httpx.HTTPError) as e:
             return await self._handle_fetch_error(url, domain, transport_name, e)
         finally:
             # Release resources
@@ -396,19 +399,31 @@ class FetchCoordinatorFacade:
         return url.split(":")[0]
 
     async def _fetch_clearnet(self, url: str, options: FetchOptions) -> FetchResult:
-        """Fetch via clearnet (httpx)."""
-        import httpx
+        """
+        Fetch via clearnet using the process-wide pooled httpx client.
 
-        timeout = httpx.Timeout(options.timeout, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url)
-            return FetchResult(
-                success=True,
-                status_code=response.status_code,
-                content=response.content,
-                content_type=response.headers.get("content-type", ""),
-                headers=dict(response.headers),
-            )
+        ISSUE #1 FIX: Replaced per-call AsyncClient with a shared session.
+        ISSUE #8 FIX: The per-instance client above was still a *second* pool
+        alongside ``transport/session_pool.py``, and its ``max_connections=100``
+        blew past the M1 8GB FD/RAM budget. Now delegated to the profile pool,
+        which applies UMA-pressure-adaptive limits (10-25 conns) and shares
+        HTTP/2 connections with every other clearnet consumer.
+
+        The former client-wide timeout becomes a per-request override, so
+        varying ``options.timeout`` no longer forces a new client.
+        """
+        from hledac.universal.transport.client_pool import get_or_create_httpx_client
+
+        client = await get_or_create_httpx_client("clearnet")
+        # [CP-4] shared client — never aclose() it here.
+        response = await client.get(url, timeout=options.timeout)
+        return FetchResult(
+            success=True,
+            status_code=response.status_code,
+            content=response.content,
+            content_type=response.headers.get("content-type", ""),
+            headers=dict(response.headers),
+        )
 
     async def start(self, _ctx: dict[str, Any]) -> None:
         """Start the coordinator."""
@@ -503,6 +518,11 @@ class FetchCoordinatorFacade:
             await self._services.aclose()
             self._services = None
 
+        # ISSUE #8: the clearnet client is owned by transport/session_pool via
+        # client_pool and is shared process-wide. Closing it here would break
+        # every other consumer mid-sprint [CP-4]; teardown belongs to the
+        # transport winddown path (close_all_clients()).
+
         self._initialized = False
         logger.info("FetchCoordinatorFacade shutdown complete")
 
@@ -566,3 +586,23 @@ class FetchCoordinatorFacade:
     def evidence(self) -> EvidenceSinkService | None:
         """Get evidence service."""
         return self._evidence
+
+    def get_semaphore(self) -> asyncio.Semaphore | None:
+        """
+        Return concurrency semaphore from AIMD service.
+
+        Returns None if AIMD service is not initialized.
+        """
+        if self._aimd is None:
+            return None
+        return self._aimd.get_semaphore()  # type: ignore
+
+    def get_backpressure(self) -> float | None:
+        """
+        Return current backpressure ratio (0.0-1.0).
+
+        Proxies to AIMD service if available.
+        """
+        if self._aimd is None:
+            return None
+        return self._aimd.get_backpressure()  # type: ignore

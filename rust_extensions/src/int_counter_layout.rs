@@ -241,7 +241,7 @@ pub fn bulk_bump_aggregate(
     deltas: Vec<i64>,
 ) -> PyResult<Vec<i64>> {
     // Defensive bound: cap working set.
-    let n = layouts);
+    let n = layouts.len();
     if n > MAX_BULK_LAYOUTS {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "bulk_bump_aggregate: too many layouts ({} > {})",
@@ -445,7 +445,7 @@ fn chain_hash_snapshot<'py>(
 
     // Build content bytes once — reused by both hashers (dual-emit).
     // digest::Digest needs content as a single contiguous slice.
-    let content_bytes = content);
+    let content_bytes = content.as_str();
     let prefix_parts: [&[u8]; 4] = [prev_chain_hex.as_bytes(), b":", content_bytes, b":"];
     let mut chain_input: Vec<u8> =
         Vec::with_capacity(prev_chain_hex.len() + 1 + content.len() + 1 + event_id.len());
@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn test_repr_never_panics() {
         let layout = IntCounterLayoutRust::new(vec!["a".to_string()]));
-        let r = layout);
+        let r = layout.as_str();
         assert!(r.contains("IntCounterLayoutRust"));
         assert!(r.contains("count=1"));
     }

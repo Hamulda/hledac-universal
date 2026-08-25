@@ -187,13 +187,13 @@ class SystemContext:
                 except Exception:
                     pass
             try:
-                import psutil
+                from hledac.universal.utils.sys_metrics import system_memory_sync
 
-                memory = psutil.virtual_memory()
+                memory = system_memory_sync()
                 system_info.update(
                     {
-                        "total_memory_gb": round(memory.total / 1024**3, 2),
-                        "available_memory_gb": round(memory.available / 1024**3, 2),
+                        "total_memory_gb": round(memory.total_gib, 2),
+                        "available_memory_gb": round(memory.available_gib, 2),
                         "memory_percent": memory.percent,
                     }
                 )
@@ -207,6 +207,7 @@ class SystemContext:
     def force_neural_cleanup(self) -> dict[str, Any]:
         """M1 Neural Memory Guard - Force cleanup of MLX and system memory."""
         from hledac.universal.utils.mlx_cache import get_mx
+        from hledac.universal._core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
 
         cleanup_results = {
             "mlx_detected": False,
@@ -218,10 +219,9 @@ class SystemContext:
             "errors": [],
         }
         try:
-            import psutil
-
-            memory = psutil.virtual_memory()
-            cleanup_results["memory_before_mb"] = round(memory.used / 1024**2, 2)
+            memory = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
+            if memory is not None:
+                cleanup_results["memory_before_mb"] = round(memory.used / 1024**2, 2)
 
             # Clear MLX cache if available
             try:
@@ -247,8 +247,9 @@ class SystemContext:
             gc.collect()
             cleanup_results["gc_collected"] = True
 
-            memory_after = psutil.virtual_memory()
-            cleanup_results["memory_after_mb"] = round(memory_after.used / 1024**2, 2)
+            memory_after = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
+            if memory_after is not None:
+                cleanup_results["memory_after_mb"] = round(memory_after.used / 1024**2, 2)
             cleanup_results["memory_freed_mb"] = round(
                 cleanup_results["memory_before_mb"] - cleanup_results["memory_after_mb"], 2
             )
@@ -280,11 +281,11 @@ class SystemContext:
         stats["uptime_seconds"] = time.time() - self.created_at
         stats.update(self._system_integrity)
         try:
-            import psutil
+            from hledac.universal.utils.sys_metrics import system_memory_sync
 
-            memory = psutil.virtual_memory()
-            stats["current_memory_gb"] = round(memory.used / 1024**3, 2)
-            stats["memory_available_gb"] = round(memory.available / 1024**3, 2)
+            memory = system_memory_sync()
+            stats["current_memory_gb"] = round(memory.used_gib, 2)
+            stats["memory_available_gb"] = round(memory.available_gib, 2)
         except Exception:
             pass
         return stats

@@ -22,7 +22,7 @@ class TestCrawlTaskDataclass:
     """CrawlTask is immutable frozen dataclass for BFS tasks."""
 
     def test_crawltask_slots(self) -> None:
-        from intelligence.dark_web_intelligence import CrawlTask
+        from hledac.universal.recon.dark_web_intelligence import CrawlTask
 
         t = CrawlTask(url="http://test.onion", depth=1, parent_url=None)
         assert t.url == "http://test.onion"
@@ -33,7 +33,7 @@ class TestCrawlTaskDataclass:
             t.url = "http://evil.onion"
 
     def test_crawltask_parent(self) -> None:
-        from intelligence.dark_web_intelligence import CrawlTask
+        from hledac.universal.recon.dark_web_intelligence import CrawlTask
 
         t = CrawlTask(url="http://child.onion", depth=2, parent_url="http://parent.onion")
         assert t.parent_url == "http://parent.onion"
@@ -43,7 +43,7 @@ class TestBFSFields:
     """DarkWebCrawler has BFS engine fields."""
 
     def test_bfs_slots_present(self) -> None:
-        from intelligence.dark_web_intelligence import DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import DarkWebCrawler
 
         crawler = DarkWebCrawler()
         assert hasattr(crawler, "_rust_url_set")
@@ -52,13 +52,13 @@ class TestBFSFields:
         assert hasattr(crawler, "_bfs_sem")
 
     def test_bfs_queue_empty_init(self) -> None:
-        from intelligence.dark_web_intelligence import DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import DarkWebCrawler
 
         crawler = DarkWebCrawler()
         assert crawler._bfs_queue == []
 
     def test_bfs_semaphore_none_before_init(self) -> None:
-        from intelligence.dark_web_intelligence import DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import DarkWebCrawler
 
         crawler = DarkWebCrawler()
         assert crawler._bfs_sem is None  # set in initialize()
@@ -69,7 +69,7 @@ class TestURLDedupBackend:
 
     def test_fallback_visited_urls_no_init(self) -> None:
         """Without calling initialize(), Rust URL set is None and fallback is used."""
-        from intelligence.dark_web_intelligence import DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import DarkWebCrawler
 
         crawler = DarkWebCrawler()
         # Rust not initialized yet - fallback to OrderedDict
@@ -80,7 +80,7 @@ class TestURLDedupBackend:
         assert crawler._is_url_visited("http://test.onion")
 
     def test_visited_urls_dedup(self) -> None:
-        from intelligence.dark_web_intelligence import DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import DarkWebCrawler
 
         crawler = DarkWebCrawler()
         crawler._mark_url_visited("http://dup.onion", None)
@@ -92,7 +92,7 @@ class TestBFSQueueOperations:
 
     @pytest.mark.asyncio
     async def test_bfs_queue_append(self) -> None:
-        from intelligence.dark_web_intelligence import CrawlTask, DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import CrawlTask, DarkWebCrawler
 
         crawler = DarkWebCrawler()
         # Directly set semaphore to avoid needing initialize()
@@ -105,7 +105,7 @@ class TestBFSQueueOperations:
 
     @pytest.mark.asyncio
     async def test_bfs_queue_pop(self) -> None:
-        from intelligence.dark_web_intelligence import CrawlTask, DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import CrawlTask, DarkWebCrawler
 
         crawler = DarkWebCrawler()
         crawler._bfs_sem = asyncio.Semaphore(5)
@@ -121,7 +121,7 @@ class TestResetSession:
 
     @pytest.mark.asyncio
     async def test_reset_clears_bfs_queue(self) -> None:
-        from intelligence.dark_web_intelligence import CrawlTask, DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import CrawlTask, DarkWebCrawler
 
         crawler = DarkWebCrawler()
         crawler._bfs_sem = asyncio.Semaphore(5)
@@ -136,7 +136,7 @@ class TestLegacyCrawl:
     """Legacy crawl_onion_legacy still accessible."""
 
     def test_legacy_method_exists(self) -> None:
-        from intelligence.dark_web_intelligence import DarkWebCrawler
+        from hledac.universal.recon.dark_web_intelligence import DarkWebCrawler
 
         crawler = DarkWebCrawler()
         assert hasattr(crawler, "crawl_onion_legacy")

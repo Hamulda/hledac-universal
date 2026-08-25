@@ -74,7 +74,7 @@ M1 8GB Bounds
 
 Python 3.14+ Best Practices
 ----------------------------
-  • Persistent async workers via asyncio.create_task()
+  • Persistent async workers via safe_create_task()
   • Bounded asyncio.Queue for backpressure
   • Proper CancelledError propagation
   • no bare except: — always except Exception or specific
@@ -361,7 +361,7 @@ class BoundedInferencePipeline:
     async def _start_workers(self) -> None:
         """Start all stage workers (idempotent, P.I6 lazy start).
 
-        Uses asyncio.create_task() directly — NOT asyncio.TaskGroup —
+        Uses safe_create_task() directly — NOT asyncio.TaskGroup —
         because workers are long-lived (run until pipeline shutdown).
         TaskGroup.__aexit__ would block waiting for workers to finish.
         """
@@ -369,13 +369,13 @@ class BoundedInferencePipeline:
             return
 
         for i in range(_PREP_WORKERS):
-            t = asyncio.create_task(self._prep_worker(i), name=f"pipeline:prep-{i}")
+            t = safe_create_task(self._prep_worker(i), name=f"pipeline:prep-{i}")
             self._prep_tasks.append(t)
 
-        self._inf_task = asyncio.create_task(self._inference_worker(), name="pipeline:inf")
+        self._inf_task = safe_create_task(self._inference_worker(), name="pipeline:inf")
 
         for i in range(_POST_WORKERS):
-            t = asyncio.create_task(self._post_worker(i), name=f"pipeline:post-{i}")
+            t = safe_create_task(self._post_worker(i), name=f"pipeline:post-{i}")
             self._post_tasks.append(t)
 
         self._started = True

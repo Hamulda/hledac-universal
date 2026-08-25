@@ -292,8 +292,8 @@ def _get_ro_pool_size() -> int:
             evaluate_uma_state,
         )
 
-        mem = psutil.virtual_memory()
-        system_used_gib = mem.used / 1024**3
+        from hledac.universal.utils.sys_metrics import system_memory_sync
+        system_used_gib = system_memory_sync().used_gib
         state = evaluate_uma_state(system_used_gib)
         preset = ConcurrencyPreset.from_state(state)
         return preset.io_threads
@@ -840,7 +840,7 @@ AUTHORIZED_DUCKDB_MODULES: frozenset[str] = frozenset(
     [
         "knowledge/duckdb_store.py",  # DuckDBShadowStore - canonical store
         "knowledge/duckdb_wal_manager.py",  # WAL manager
-        "knowledge/duckdb_base.py",  # Base class
+        "knowledge/duckdb_base_store.py",  # Base class
         "core/duckdb_pool.py",  # THIS module - canonical pool
     ]
 )

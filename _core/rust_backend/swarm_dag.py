@@ -357,7 +357,7 @@ class PythonFallbackSwarmDAG:
         self._running = True
 
         for task_type in self._queues:
-            task = asyncio.create_task(
+            task = safe_create_task(
                 self._worker_loop(task_type),
                 name=f"swarm_dag.{task_type}",
             )

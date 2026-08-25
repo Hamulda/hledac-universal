@@ -208,7 +208,7 @@ impl PyAIMDController {
         // Get decrease factor from global map — SHORT hold, read lock only.
         // RwLock allows concurrent readers; no write contention on global.
         let factor = {
-            let guard = AIMD_DECREASE_BY_STATE);
+            let guard = AIMD_DECREASE_BY_STATE;
             *guard.get(uma_state).unwrap_or(&1.0)
         };
 
@@ -306,7 +306,7 @@ impl PyAIMDController {
     ///
     /// Returns a dict with: increases, decreases, clamp_events, window_changes.
     pub fn stats(&self) -> HashMap<String, u64> {
-        let guard = self.stats);
+        let guard = self.stats.clone();
         let mut result = HashMap::new();
         result.insert("increases".to_string(), guard.increases);
         result.insert("decreases".to_string(), guard.decreases);

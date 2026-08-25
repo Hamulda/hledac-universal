@@ -236,7 +236,7 @@ class MicroSprintService:
             return
 
         self._running.set()  # ISSUE-OPT-1: Set running state
-        self._sprint_task = asyncio.create_task(self._sprint_loop())
+        self._sprint_task = safe_create_task(self._sprint_loop())
         logger.info("Micro sprint loop started")
 
     async def stop_sprint_loop(self) -> None:

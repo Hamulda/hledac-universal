@@ -261,10 +261,11 @@ class SystemMonitor:
     async def _update_metrics(self) -> None:
         """Update system metrics."""
         try:
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            memory = psutil.virtual_memory()
+            cpu_percent = psutil.cpu_percent(interval=0.0)
+            from hledac.universal.utils.sys_metrics import system_memory_sync
+            memory = system_memory_sync()
             memory_percent = memory.percent
-            memory_available_mb = memory.available / (1024 * 1024)
+            memory_available_mb = memory.available_gib * 1024
             memory_pressure = self._get_memory_pressure(memory_percent, memory_available_mb)
             thermal_state = self._get_thermal_state(cpu_percent)
             battery_percent = None

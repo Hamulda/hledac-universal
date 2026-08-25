@@ -29,6 +29,8 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from hledac.universal._core.env_config import credential_names
+
 logger = logging.getLogger(__name__)
 
 # Bound for recursive scrubbing
@@ -350,9 +352,30 @@ def redact_env_var(text: str | bytes | None, env_var: str) -> str | bytes | None
         return text
 
 
+def redact_credential(text: str | bytes | None, canonical: str) -> str | bytes | None:
+    """
+    Redact every alias of a canonical ``HLEDAC_*`` credential from text.
+
+    L2: credentials resolve through ``_core.env_config.credential_names()``
+    (canonical name + vendor/legacy aliases). The scrubber MUST cover the exact
+    same name set, otherwise a key readable under an alias would leak verbatim.
+
+    Args:
+        text: Text or bytes potentially containing the credential value
+        canonical: Canonical name, e.g. ``"HLEDAC_SHODAN_API_KEY"``
+
+    Returns:
+        Text with every matching credential value replaced by [REDACTED_API_KEY]
+    """
+    result = text
+    for name in credential_names(canonical):
+        result = redact_env_var(result, name)
+    return result
+
+
 def redact_shodan_key(text: str | bytes | None) -> str | bytes | None:
     """
-    Redact SHODAN_API_KEY from text.
+    Redact the Shodan API key (HLEDAC_SHODAN_API_KEY + SHODAN_API_KEY) from text.
 
     ISSUE [FINAL]-019-09: Shodan may echo the API key in 401/403 error
     responses. This ensures the key never reaches payload_text or logs.
@@ -361,34 +384,38 @@ def redact_shodan_key(text: str | bytes | None) -> str | bytes | None:
         text: Text potentially containing the Shodan API key
 
     Returns:
-        Text with SHODAN_API_KEY value replaced by [REDACTED_API_KEY]
+        Text with the Shodan key value replaced by [REDACTED_API_KEY]
     """
-    return redact_env_var(text, "SHODAN_API_KEY")
+    return redact_credential(text, "HLEDAC_SHODAN_API_KEY")
 
 
 def redact_censys_credentials(
     text: str | bytes | None,
 ) -> str | bytes | None:
     """
-    Redact CENSYS_API_ID and CENSYS_SECRET from text.
+    Redact Censys API ID and secret from text.
 
     ISSUE [FINAL]-019-09: Censys may echo credentials in 401/403 error
     responses. Redacts both API ID and secret.
+
+    L2 fix: covers HLEDAC_CENSYS_API_SECRET *and both* legacy aliases
+    (CENSYS_API_SECRET, CENSYS_SECRET). Previously only CENSYS_SECRET was
+    scrubbed, so a secret set as CENSYS_API_SECRET (the name used by
+    recon/exposure_clients.py and recon/exposed_service_hunter.py) leaked.
 
     Args:
         text: Text potentially containing Censys credentials
 
     Returns:
-        Text with both CENSYS_API_ID and CENSYS_SECRET values replaced
+        Text with both Censys credential values replaced
     """
-    result = redact_env_var(text, "CENSYS_API_ID")
-    result = redact_env_var(result, "CENSYS_SECRET")
-    return result
+    result = redact_credential(text, "HLEDAC_CENSYS_API_ID")
+    return redact_credential(result, "HLEDAC_CENSYS_API_SECRET")
 
 
 def redact_greynoise_key(text: str | bytes | None) -> str | bytes | None:
     """
-    Redact GREYNOISE_API_KEY from text.
+    Redact the GreyNoise API key (HLEDAC_GREYNOISE_API_KEY + GREYNOISE_API_KEY).
 
     ISSUE [FINAL]-019-09: GreyNoise may echo the API key in 401/403 error
     responses. This ensures the key never reaches payload_text or logs.
@@ -397,14 +424,14 @@ def redact_greynoise_key(text: str | bytes | None) -> str | bytes | None:
         text: Text potentially containing the GreyNoise API key
 
     Returns:
-        Text with GREYNOISE_API_KEY value replaced by [REDACTED_API_KEY]
+        Text with the GreyNoise key value replaced by [REDACTED_API_KEY]
     """
-    return redact_env_var(text, "GREYNOISE_API_KEY")
+    return redact_credential(text, "HLEDAC_GREYNOISE_API_KEY")
 
 
 def redact_ipinfo_key(text: str | bytes | None) -> str | bytes | None:
     """
-    Redact IPINFO_API_KEY from text.
+    Redact the IPInfo API key (HLEDAC_IPINFO_API_KEY + IPINFO_API_KEY).
 
     ISSUE [FINAL]-019-09: IPInfo may echo the API key in 401/403 error
     responses.
@@ -413,14 +440,14 @@ def redact_ipinfo_key(text: str | bytes | None) -> str | bytes | None:
         text: Text potentially containing the IPInfo API key
 
     Returns:
-        Text with IPINFO_API_KEY value replaced by [REDACTED_API_KEY]
+        Text with the IPInfo key value replaced by [REDACTED_API_KEY]
     """
-    return redact_env_var(text, "IPINFO_API_KEY")
+    return redact_credential(text, "HLEDAC_IPINFO_API_KEY")
 
 
 def redact_hibp_key(text: str | bytes | None) -> str | bytes | None:
     """
-    Redact HIBP_API_KEY from text.
+    Redact the HIBP API key (HLEDAC_HIBP_API_KEY + HIBP_API_KEY).
 
     ISSUE [FINAL]-019-09: HaveIBeenPwned may echo the API key in error responses.
 
@@ -428,9 +455,9 @@ def redact_hibp_key(text: str | bytes | None) -> str | bytes | None:
         text: Text potentially containing the HIBP API key
 
     Returns:
-        Text with HIBP_API_KEY value replaced by [REDACTED_API_KEY]
+        Text with the HIBP key value replaced by [REDACTED_API_KEY]
     """
-    return redact_env_var(text, "HIBP_API_KEY")
+    return redact_credential(text, "HLEDAC_HIBP_API_KEY")
 
 
 def safe_error_log(logger: logging.Logger, message: str, *args: Any) -> None:
@@ -441,8 +468,10 @@ def safe_error_log(logger: logging.Logger, message: str, *args: Any) -> None:
     direct logger.warning/error calls when the message or args might contain
     API key values.
 
-    Currently redacts: SHODAN_API_KEY, CENSYS_API_ID, CENSYS_SECRET,
-    GREYNOISE_API_KEY, IPINFO_API_KEY, HIBP_API_KEY
+    Currently redacts (canonical name + every alias from
+    ``_core.env_config.API_KEY_ALIASES``): HLEDAC_SHODAN_API_KEY,
+    HLEDAC_CENSYS_API_ID, HLEDAC_CENSYS_API_SECRET, HLEDAC_GREYNOISE_API_KEY,
+    HLEDAC_IPINFO_API_KEY, HLEDAC_HIBP_API_KEY
 
     Args:
         logger: Logger instance to use

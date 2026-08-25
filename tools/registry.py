@@ -26,6 +26,7 @@ DO NOT:
 from __future__ import annotations
 
 import asyncio
+import msgspec
 from collections.abc import Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any

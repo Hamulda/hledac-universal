@@ -156,7 +156,7 @@ async def _execute_preflight_checks(
     with _fail_safe_async("debug", "ct_log_client.init"):
         from pathlib import Path
 
-        from hledac.universal.intel.ct_log_client import CTLogClient
+        from hledac.universal.recon.ct_log_client import CTLogClient
 
         _ct_cache = Path.home() / ".hledac" / "ct_cache"
         _ct_cache.mkdir(parents=True, exist_ok=True)

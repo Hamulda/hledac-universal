@@ -360,7 +360,7 @@ fn remap_file_to_child(file_path: &str, file_size: usize) -> Result<(u32, usize)
     // ── Parent process ─────────────────────────────────────────────────────
     unsafe { libc::close(read_fd) }; // close read end
 
-    let size_bytes = file_size);
+    let size_bytes = file_size.as_str();
     let _ = unsafe { libc::write(write_fd, size_bytes.as_ptr() as *const c_void, 8) };
     unsafe { libc::close(write_fd) };
 
@@ -735,7 +735,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
     // Write handover [addr(8) + size(8)] to child via pipe
     let handover = {
         let addr_bytes = (src_ptr as usize));
-        let size_bytes = mapped_size);
+        let size_bytes = mapped_size.as_str();
         let mut h = Vec::with_capacity(16);
         h.extend_from_slice(&addr_bytes);
         h.extend_from_slice(&size_bytes);
@@ -985,7 +985,7 @@ pub fn vm_remap_and_exec(
     unsafe { libc::close(pipe_read) }; // parent doesn't read from child via pipe
     let handover = {
         let addr_bytes = (src_ptr as usize));
-        let size_bytes = mapped_size);
+        let size_bytes = mapped_size.as_str();
         let mut h = Vec::with_capacity(16);
         h.extend_from_slice(&addr_bytes);
         h.extend_from_slice(&size_bytes);

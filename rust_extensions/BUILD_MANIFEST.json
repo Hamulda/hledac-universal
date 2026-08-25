@@ -1,8 +1,8 @@
 {
   "version": "1.0",
   "manifest_version": "1.0",
-  "generated_at": "2026-08-14T12:32:19.174515+00:00",
-  "source_hash": "ed1f38cda823443379199623c1055cb7478f7bc43182353a0440f1675bd2b64b",
+  "generated_at": "2026-08-24T13:50:43.454007+00:00",
+  "source_hash": "e854bfa508911d57316fe2e6b8499311af50a9391c4c162782743a67ec942cc4",
   "source_hash_algorithm": "blake2b-256",
   "files_hashed": [
     "Cargo.toml",
@@ -89,9 +89,7 @@
     "src/query_terms.rs",
     "src/quic.rs",
     "src/rate_limit.rs",
-    "src/regex_lz4.rs",
     "src/rolling_hash.rs",
-    "src/sendfile.rs",
     "src/serde_json_rs.rs",
     "src/signal_batch.rs",
     "src/simd_similarity.rs",
@@ -114,17 +112,16 @@
     "src/url_engine.rs",
     "src/url_ops.rs",
     "src/url_set.rs",
-    "src/warc_parser.rs",
     "src/whisper.rs",
     "src/xml_sanitize.rs",
     "src/xxhash_ext.rs",
     "src/zero_copy.rs"
   ],
-  "file_count": 114,
+  "file_count": 111,
   "build_command": "CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo build --release --manifest-path rust_extensions/Cargo.toml",
   "maturin_build": true,
   "platform": {
-    "platform": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
     "machine": "arm64",
     "processor": "arm",
     "python_version": "3.14.6"

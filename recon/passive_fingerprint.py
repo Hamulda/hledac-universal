@@ -1321,7 +1321,7 @@ async def _enrich_favicon_findings(
             finally:
                 await session_pool.release(session)
 
-    tasks = [asyncio.create_task(_fetch_one(html, url)) for html, url in candidates]
+    tasks = [safe_create_task(_fetch_one(html, url)) for html, url in candidates]
     if not tasks:
         return enriched
     try:
@@ -1658,7 +1658,7 @@ async def run_passive_tech_stack_sidecar(findings: list[CanonicalFinding], store
     Fail-soft: returns 0 on any error.
 
     When tech_stack signals (CMS, web server, framework) are detected,
-    CVE lookup is triggered as asyncio.create_task() for significant technologies.
+    CVE lookup is triggered as safe_create_task() for significant technologies.
     """
     if not findings or store is None:
         return 0
@@ -1683,7 +1683,7 @@ def _trigger_cve_lookup_tasks(findings: list[CanonicalFinding], store: Any) -> N
     ISSUE [ULTIMATE]-004: First checks local CveCorrelationMatrix (zero network).
     Falls back to external OSV/NVD/GitHub search only for uncached technologies.
 
-    Triggers asyncio.create_task() for: WordPress, Drupal, Joomla, Typo3,
+    Triggers safe_create_task() for: WordPress, Drupal, Joomla, Typo3,
     nginx, Apache, Next.js, React, Vue, Angular, Gatsby.
 
     CVE results are stored via store.async_ingest_findings_batch().

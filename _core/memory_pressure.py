@@ -447,7 +447,7 @@ class MemoryPressureBroadcaster:
         if self._running:
             return
         self._running = True
-        self._monitor_task = asyncio.create_task(self._monitor_loop(), name="memory_pressure:monitor")
+        self._monitor_task = safe_create_task(self._monitor_loop(), name="memory_pressure:monitor")
         logger.info("[MemoryPressure] Broadcaster started (poll=%.1fs)", self._poll_interval_s)
 
     async def stop(self) -> None:
@@ -683,7 +683,7 @@ def start_broadcaster() -> asyncio.Task:
     Must be called from within a running event loop.
     """
     bc = get_broadcaster()
-    return asyncio.create_task(bc.start())
+    return safe_create_task(bc.start())
 
 
 __all__ = [

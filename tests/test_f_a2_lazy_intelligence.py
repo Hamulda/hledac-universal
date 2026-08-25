@@ -24,6 +24,10 @@ import time
 
 import pytest
 
+# The `intelligence` PEP562 lazy-facade package was removed; these tests verify
+# its (now obsolete) behaviour, so skip the whole module rather than fail CI.
+pytestmark = pytest.mark.skip(reason="intelligence PEP562 lazy-facade removed; tests obsolete")
+
 
 # Force the package to be importable; conftest already does this in CI.
 @pytest.fixture

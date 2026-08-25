@@ -233,7 +233,7 @@ pub fn batch_graph_traverse<'py>(
     } else {
         max_hops.min(MAX_HOPS)
     };
-    let db_path_clone = db_path);
+    let db_path_clone = db_path.clone();
     let cache_dir = get_cache_dir();
 
     let results: Vec<(String, Vec<TraversalResult>)> = io_pool().install(|| {
@@ -352,7 +352,7 @@ pub fn graph_stats<'py>(
 
     let top_nodes = PyList::empty(py);
     THREAD_CONN.with(|cell| {
-        let opt_conn = cell);
+        let opt_conn = cell.clone();
         if let Some(conn) = opt_conn.as_ref() {
             if let Ok(mut stmt) = conn.prepare(&sql) {
                 if let Ok(mapped) = stmt.query_map([], |row| {
@@ -427,7 +427,7 @@ pub fn batch_graph_traverse_flat<'py>(
         max_hops.min(MAX_HOPS)
     };
     let max_per_root = max_per_root.min(MAX_RESULTS_PER_ROOT);
-    let db_path_clone = db_path);
+    let db_path_clone = db_path.clone();
     let cache_dir = get_cache_dir();
 
     let flat_results: Vec<FlatTraversalResult> = io_pool().install(|| {
@@ -554,7 +554,7 @@ fn load_ioc_graph_from_db(
             }
         }
 
-        let n = node_ids);
+        let n = node_ids.len();
         if n == 0 {
             return Some((node_ids, Vec::new(), name_to_idx));
         }
@@ -631,7 +631,7 @@ pub fn batch_graph_centrality<'py>(
         }
     };
 
-    let n = node_ids);
+    let n = node_ids.len();
     if n == 0 || adj.is_empty() {
         return Ok(dict);
     }
@@ -717,7 +717,7 @@ pub fn batch_graph_communities<'py>(
         }
     };
 
-    let n = node_ids);
+    let n = node_ids.len();
     if n == 0 {
         return Ok(dict);
     }
@@ -809,7 +809,7 @@ mod tests {
             confidence: 0.9,
             source: "test".to_string(),
         };
-        let r2 = r);
+        let r2 = r.clone();
         assert_eq!(r.dst_value, r2.dst_value);
     }
 
@@ -827,7 +827,7 @@ mod tests {
             source: "source.com".to_string(),
             depth: 1,
         };
-        let r2 = r);
+        let r2 = r.clone();
         assert_eq!(r.dst_value, r2.dst_value);
         assert_eq!(r.source, r2.source);
         assert_eq!(r.depth, r2.depth);

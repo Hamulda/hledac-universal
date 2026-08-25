@@ -111,6 +111,6 @@ a DuckDB canonical store.
 - **Entry point:** `core/__main__.py:run_sprint()` (canonical), `__main__.py:main()` (CLI dispatcher).
 - **Canonical write path:** `DuckDBShadowStore.async_ingest_findings_batch()` — **jediná** brána.
 - **MLX inference seam:** `Hermes3Engine.generate()`.
-- **HTTP fetch seam:** `FetchCoordinator.fetch()` (curl_cffi + JA3).
+- **HTTP fetch seam:** `FetchCoordinatorAdapter.fetch()` (clearnet→public_fetcher, onion/i2p→FetchCoordinatorFacade).
 - **Graph upsert seam:** `DuckPGQGraph.upsert_ioc()`.
 - **Sidecar registration seam:** `SidecarRegistry.register("<id>")` v `runtime/sidecar_protocol_adapters.py`.

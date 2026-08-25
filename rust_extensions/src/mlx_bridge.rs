@@ -332,7 +332,7 @@ impl MLXBridge {
     #[new]
     #[pyo3(signature = (engine, tokenizer, config=None))]
     fn new(engine: Py<PyAny>, tokenizer: Py<PyAny>, config: Option<MLXBridgeConfig>) -> Self {
-        let cfg = config);
+        let cfg = config.clone();
         Self {
             engine,
             tokenizer,
@@ -479,7 +479,7 @@ pub fn batch_tokenize_(
     let mut results: Vec<Vec<u32>> = Vec::with_capacity(tokenizers.len());
     for (tok, prompt) in tokenizers.iter().zip(prompts.iter()) {
         // Get a Python reference from the Py<PyAny>
-        let tok_ref = tok);
+        let tok_ref = tok.clone();
         // Call tokenizer.encode(prompt) - returns Py<PyAny>
         let result = match tok_ref.call_method1(py, "encode", (prompt,)) {
             Ok(r) => r,

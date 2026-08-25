@@ -132,7 +132,7 @@ pub fn fetch(
     };
 
     let port = parsed.port().unwrap_or(443);
-    let path = parsed);
+    let path = parsed.clone();
     let authority = format!("{}:{}", host, port);
 
     // Acquire permit with timeout
@@ -394,7 +394,7 @@ fn find_status_in_response(body: &[u8]) -> Option<u16> {
         if body[i] == 0x40 {
             let remaining = &body[i + 1..];
             if remaining.starts_with(status_prefix) {
-                let value_start = i + 1 + status_prefix);
+                let value_start = i + 1 + status_prefix.len();
                 if value_start + 3 <= body.len() {
                     let status_bytes = &body[value_start..value_start + 3];
                     if status_bytes.len() == 3

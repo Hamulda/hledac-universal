@@ -171,6 +171,9 @@ async def async_run_live_public_pipeline(
     except asyncio.CancelledError:
         logger.debug("Pipeline cancelled")
         raise
+    except Exception as exc:
+        logger.exception("Pipeline failed (fail-safe): %s", exc)
+        return _build_emergency_result(ctx)
 
 
 def _ensure_patched() -> None:

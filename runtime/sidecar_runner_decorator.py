@@ -12,7 +12,7 @@ Pattern (before → after):
     async def _xxx_runner(findings, store, query):
         if not findings or store is None: return
         try:
-            from hledac.universal.intel.xxx import create_xxx_adapter
+            from hledac.universal.recon.xxx import create_xxx_adapter
         except Exception: return
         try:
             adapter = create_xxx_adapter()
@@ -25,7 +25,7 @@ Pattern (before → after):
   AFTER (8-12 LOC per runner):
     _XxxRunner = sidecar_runner(
         name="xxx",
-        module_path="hledac.universal.intel.xxx",
+        module_path="hledac.universal.recon.xxx",
         factory_name="create_xxx_adapter",
         correlate_method="do_something",
     )
@@ -86,7 +86,7 @@ def sidecar_runner(
     Usage:
         _ExposureCorrelatorRunner = sidecar_runner(
             name="exposure_correlator",
-            module_path="hledac.universal.intel.exposure_correlator",
+            module_path="hledac.universal.recon.exposure_correlator",
             factory_name="create_exposure_correlator_adapter",
             correlate_method="correlate",
     )
@@ -242,7 +242,7 @@ class BaseSidecarRunner:
     @property
     @abstractmethod
     def _module_path(self) -> str | None:
-        """Dotted module path for the adapter (e.g. 'hledac.universal.intel.xxx')."""
+        """Dotted module path for the adapter (e.g. 'hledac.universal.recon.xxx')."""
         raise NotImplementedError
 
     @property

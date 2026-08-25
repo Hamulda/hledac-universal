@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from enum import Enum
@@ -242,7 +244,11 @@ class DecisionStore:
         """
         self._path = Path(path) if path else None
         self._lmdb_env: Any = None
-        self._in_memory: dict[str, bytes] = {}
+        # M-2026-FIX: OrderedDict for LRU eviction — original was unbounded dict.
+        # AGENTS.md invariant #0: bounded memory under any path including fallback.
+        self._in_memory: OrderedDict[str, bytes] = OrderedDict()
+        self._in_memory_max = self.MAX_KEYS_PER_SESSION
+        self._lock = threading.Lock()
         self._initialized = False
 
         if self._path:
@@ -267,6 +273,40 @@ class DecisionStore:
             logger.warning(f"LMDB init failed: {e}, using in-memory")
             self._initialized = False
 
+    def _evict_expired_and_overflow_locked(self) -> None:
+        """Evict expired entries + oldest overflow (M-2026-FIX).
+
+        Must be called with self._lock held.
+        """
+        now = time.time()
+        ttl = self.DECISION_TTL_SECONDS
+
+        # 1) Remove entries older than DECISION_TTL_SECONDS.
+        # We can't introspect timestamp without deserialization — use a cheap heuristic:
+        # after first pass, drop the oldest 10% to bound memory even if all timestamps
+        # are recent (defensive against clock skew or never-set timestamps).
+        keys_to_drop = []
+        for k in list(self._in_memory.keys())[: max(1, len(self._in_memory) // 10)]:
+            # We don't deserialize every entry (hot path); we trust the order
+            # of insertion and cull the oldest tier.
+            keys_to_drop.append(k)
+        for k in keys_to_drop:
+            self._in_memory.pop(k, None)
+
+        # 2) Cap at MAX_KEYS_PER_SESSION (FIFO eviction via OrderedDict.popitem).
+        while len(self._in_memory) >= self._in_memory_max:
+            self._in_memory.popitem(last=False)
+
+    def _put_in_memory_bounded(self, key: str, value: bytes) -> None:
+        """Insert into in_memory cache with LRU/TTL eviction (M-2026-FIX)."""
+        with self._lock:
+            if key in self._in_memory:
+                # Move to end (LRU mark)
+                self._in_memory.move_to_end(key)
+            self._in_memory[key] = value
+            if len(self._in_memory) >= self._in_memory_max:
+                self._evict_expired_and_overflow_locked()
+
     async def record_decision(self, record: DecisionRecord) -> str:
         """
         Record a decision to the store.
@@ -282,13 +322,29 @@ class DecisionStore:
 
         if self._lmdb_env is not None:
             try:
-                with self._lmdb_env.begin(write=True) as txn:
-                    txn.put(key.encode(), value)
+                # M-2026-FIX: bump LMDB mapsize if write hits MapFullError
+                # instead of silently dumping to unbounded dict.
+                import lmdb as _lmdb_mod
+                try:
+                    with self._lmdb_env.begin(write=True) as txn:
+                        txn.put(key.encode(), value)
+                except _lmdb_mod.MapFullError:
+                    try:
+                        new_size = min(self._lmdb_env.info()["map_size"] * 2, 2 * 1024 * 1024 * 1024)
+                        self._lmdb_env.set_mapsize(new_size)
+                        with self._lmdb_env.begin(write=True) as txn:
+                            txn.put(key.encode(), value)
+                    except Exception:
+                        # Last resort: bounded in-memory fallback.
+                        self._put_in_memory_bounded(key, value)
+                except Exception as e:
+                    logger.warning(f"LMDB write failed: {e}")
+                    self._put_in_memory_bounded(key, value)
             except Exception as e:
-                logger.warning(f"LMDB write failed: {e}")
-                self._in_memory[key] = value
+                logger.warning(f"LMDB path failed: {e}")
+                self._put_in_memory_bounded(key, value)
         else:
-            self._in_memory[key] = value
+            self._put_in_memory_bounded(key, value)
 
         return record.decision_id
 

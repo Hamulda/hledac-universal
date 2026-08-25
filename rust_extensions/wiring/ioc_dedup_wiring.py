@@ -46,8 +46,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 from hledac.universal._core.rust_backend import rust as _rust_backend

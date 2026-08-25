@@ -28,6 +28,7 @@ import random
 import secrets
 import threading
 import time
+from functools import cache
 from collections import deque
 from dataclasses import field
 from enum import Enum
@@ -54,90 +55,51 @@ from .base import DecisionResponse, ExecutionResult, OperationType, UniversalCoo
 
 # BREAKTHROUGH #3: Step-Level PRM imports (lazy-loaded for M1 8GB compatibility)
 # NEXTGEN-05: Prefer RustPRMScorer for Rust-native CoreML ANE inference
-_PRM_SCORER = None  # Global PRM scorer instance (lazy-loaded)
-_PRM_SCORER_RUST = None  # Global Rust PRM scorer instance
-_PRM_SCORER_LOCK = threading.Lock()  # Thread-safe initialization lock
-
-
-def _get_prm_scorer():
-    """
-    Get or create the global PRM scorer instance.
-
-    Thread-safe lazy-loaded to avoid import overhead when PRM isn't used.
-    M1 8GB safe: CoreML ANE uses dedicated memory, not main RAM budget.
-
-    Priority order:
-    1. RustPRMScorer — Rust-native CoreML ANE inference (< 2ms per batch)
-    2. PRMInference — Python CoreML path (fallback)
-    3. NumPy fallback — CPU inference (last resort)
-
-    Uses double-checked locking pattern:
-    1. Fast path: check if already initialized (no lock needed)
-    2. Slow path: acquire lock, double-check, then initialize
-    """
-    global _PRM_SCORER, _PRM_SCORER_RUST
-
-    # Fast path: already initialized
-    if _PRM_SCORER is not None:
-        return _PRM_SCORER
-
-    with _PRM_SCORER_LOCK:
-        # Double-check after acquiring lock
-        if _PRM_SCORER is None:
-            # Try RustPRMScorer first (NEXTGEN-05: Rust-native CoreML)
-            try:
-                from planning.step_reward_model import RustPRMScorer
-
-                _PRM_SCORER_RUST = RustPRMScorer()
-                if _PRM_SCORER_RUST.is_available:
-                    _PRM_SCORER_RUST.load()
-                    logger.info("[ToT-PRM] Using Rust-native CoreML ANE inference")
-                    _PRM_SCORER = _PRM_SCORER_RUST
-                    return _PRM_SCORER
-            except Exception as e:
-                logger.debug(f"[ToT-PRM] RustPRMScorer not available: {e}")
-
-            # Fall back to Python PRMInference
-            try:
-                from planning.step_reward_model import create_default_prm_scorer
-
-                _PRM_SCORER = create_default_prm_scorer()
-                logger.info("[ToT-PRM] PRM scorer initialized (Python path)")
-            except Exception as e:
-                logger.warning(f"[ToT-PRM] Failed to initialize PRM scorer: {e}")
-                return None
-    return _PRM_SCORER
-
-
+#
+# M6 FIX: Replaced broken double-checked locking (module globals + threading.Lock)
+# with @functools.cache. functools.cache is GIL-protected and thread-safe in CPython,
+# eliminates the data race on the None->singleton transition, and matches the canonical
+# pattern used by _core/env_config.py (F280). No mutable module-level singleton state.
+@cache
 def _get_rust_prm_scorer():
+    """Get the Rust-native PRM scorer (CoreML ANE), or None if unavailable."""
+    try:
+        from planning.step_reward_model import RustPRMScorer
+    except Exception as e:
+        logger.debug(f"[ToT-PRM] RustPRMScorer not available: {e}")
+        return None
+    try:
+        scorer = RustPRMScorer()
+        if scorer.is_available:
+            scorer.load()
+            logger.info("[ToT-PRM] Using Rust-native CoreML ANE inference")
+            return scorer
+        logger.debug("[ToT-PRM] Rust ANE not available")
+        return None
+    except Exception as e:
+        logger.debug(f"[ToT-PRM] RustPRMScorer failed: {e}")
+        return None
+
+
+@cache
+def _get_prm_scorer():
+    """Get or create the global PRM scorer instance (thread-safe, lazy).
+
+    Priority: RustPRMScorer (CoreML ANE) -> Python PRMInference -> None.
+    M1 8GB safe: CoreML ANE uses dedicated memory, not main RAM budget.
     """
-    Get or create the Rust-native PRM scorer instance.
+    rust = _get_rust_prm_scorer()
+    if rust is not None:
+        return rust
+    try:
+        from planning.step_reward_model import create_default_prm_scorer
 
-    Returns None if Rust ANE is not available.
-    Use this for explicit Rust-native scoring when needed.
-    """
-    global _PRM_SCORER_RUST
-
-    if _PRM_SCORER_RUST is not None:
-        return _PRM_SCORER_RUST
-
-    with _PRM_SCORER_LOCK:
-        if _PRM_SCORER_RUST is None:
-            try:
-                from planning.step_reward_model import RustPRMScorer
-
-                _PRM_SCORER_RUST = RustPRMScorer()
-                if _PRM_SCORER_RUST.is_available:
-                    _PRM_SCORER_RUST.load()
-                    logger.info("[ToT-PRM] Rust PRM scorer loaded")
-                    return _PRM_SCORER_RUST
-                else:
-                    logger.debug("[ToT-PRM] Rust ANE not available")
-                    return None
-            except Exception as e:
-                logger.debug(f"[ToT-PRM] RustPRMScorer failed: {e}")
-                return None
-    return _PRM_SCORER_RUST
+        scorer = create_default_prm_scorer()
+        logger.info("[ToT-PRM] PRM scorer initialized (Python path)")
+        return scorer
+    except Exception as e:
+        logger.warning(f"[ToT-PRM] Failed to initialize PRM scorer: {e}")
+        return None
 
 
 logger = logging.getLogger(__name__)

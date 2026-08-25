@@ -650,7 +650,7 @@ impl IOSurfaceTextureDescriptor {
 #[cfg(target_os = "macos")]
 #[pyfunction]
 pub fn is_iosurface_bridge_available() -> (bool, Option<String>) {
-    let device_guard = METAL_DEVICE);
+    let device_guard = METAL_DEVICE;
     match &*device_guard {
         Some(wrapper) => {
             let name = Some(wrapper.device.name().to_string());
@@ -789,7 +789,7 @@ pub fn create_metal_texture_from_iosurface(
         ));
     }
 
-    let device_guard = METAL_DEVICE);
+    let device_guard = METAL_DEVICE;
     let wrapper = device_guard
         .as_ref()
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Metal device not available"))?;
@@ -862,7 +862,7 @@ pub fn create_metal_texture_from_iosurface(
 #[cfg(target_os = "macos")]
 #[pyfunction]
 pub fn get_iosurface_bridge_telemetry(py: Python<'_>) -> PyResult<Py<PyDict>> {
-    let device_guard = METAL_DEVICE);
+    let device_guard = METAL_DEVICE;
     let dict = PyDict::new(py);
 
     match &*device_guard {
@@ -870,7 +870,7 @@ pub fn get_iosurface_bridge_telemetry(py: Python<'_>) -> PyResult<Py<PyDict>> {
             dict.set_item("available", true)?;
             dict.set_item("texture_cache_size", wrapper.texture_cache.len() as u64)?;
             dict.set_item("max_textures", 4u64)?;
-            let device_name = wrapper.device);
+            let device_name = wrapper.device.clone();
             dict.set_item("device_name", device_name)?;
         }
         None => {

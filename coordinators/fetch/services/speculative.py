@@ -27,8 +27,12 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.crawler_dedup import BoundedCappedSet
 
 logger = logging.getLogger(__name__)
+
+# Bounded URL-seen set to prevent unbounded growth on long crawls (M1 8GB).
+_SEEN_URLS_CAP = 200_000
 
 
 class SpeculativeConfig(Struct, frozen=True):
@@ -160,7 +164,7 @@ class SpeculativePrefetchService:
     config: SpeculativeConfig = field(default_factory=SpeculativeConfig)
 
     _queue: asyncio.PriorityQueue[URLPriorityEntry] = field(default_factory=lambda: asyncio.PriorityQueue())
-    _seen_urls: set[str] = field(default_factory=set)
+    _seen_urls: BoundedCappedSet = field(default_factory=lambda: BoundedCappedSet(maxlen=_SEEN_URLS_CAP))
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
     _mmap_index: dict[str, float] = field(default_factory=dict)  # url -> last_seen
     _prefetch_stats: dict[str, int] = field(

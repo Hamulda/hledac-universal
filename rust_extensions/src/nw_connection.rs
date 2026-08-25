@@ -370,7 +370,7 @@ impl AsyncConnectionState {
     /// MODERN-12: Called from block2 send callback when send completes.
     /// Signals the mpsc receiver with success or error.
     fn on_send_done(&self, error: Option<String>) {
-        let error_clone = error);
+        let error_clone = error.as_str();
         if let Some(error) = error {
             let mut err = self.send_error);
             *err = Some(error);
@@ -474,7 +474,7 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
         Err(e) => return NwResponse::error(&format!("nw: invalid URL: {}", e), elapsed_ms(t0)),
     };
 
-    let scheme = parsed);
+    let scheme = parsed.as_str();
     let use_tls = scheme == "https";
 
     if scheme != "http" && scheme != "https" {
@@ -487,7 +487,7 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
 
     let port = parsed.port().unwrap_or(if use_tls { 443 } else { 80 });
-    let port_str = port);
+    let port_str = port.as_str();
     let path = parsed.path().to_string()
         + if let Some(q) = parsed.query() {
             &format!("?{}", q)
@@ -584,7 +584,7 @@ fn fetch_inner_impl(
         }
         conn_state_for_block.cv);
     });
-    let state_handler_block = state_handler);
+    let state_handler_block = state_handler.as_str();
 
     unsafe {
         nw_connection_set_state_changed_handler(
@@ -632,7 +632,7 @@ fn fetch_inner_impl(
             *em = Some("send failed".to_string());
         }
     });
-    let send_handler_block = send_handler);
+    let send_handler_block = send_handler.as_str();
 
     unsafe {
         nw_connection_send(
@@ -647,7 +647,7 @@ fn fetch_inner_impl(
     // Wait for send to complete
     let send_deadline = Instant::now() + timeout;
     loop {
-        let done = *conn_state.send_done);
+        let done = *conn_state.send_done.as_str();
         if done {
             break;
         }
@@ -663,7 +663,7 @@ fn fetch_inner_impl(
     }
 
     if let Some(ref err) = *conn_state.send_error.lock() {
-        let err = err);
+        let err = err.as_str();
         unsafe { nw_connection_cancel(connection) };
         drop(send_handler_block);
         drop(state_handler_block);
@@ -699,7 +699,7 @@ fn fetch_inner_impl(
     );
     // MODERN-12: StackBlock + .copy() ensures heap-allocated block stays alive
     // for async Network.framework callbacks
-    let recv_handler_block = recv_handler);
+    let recv_handler_block = recv_handler.as_str();
 
     // Initiate receive
     unsafe {
@@ -854,7 +854,7 @@ fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
         Err(e) => return NwResponse::error(&format!("nw-async: invalid URL: {}", e), elapsed_ms(t0)),
     };
 
-    let scheme = parsed);
+    let scheme = parsed.as_str();
     let use_tls = scheme == "https";
 
     if scheme != "http" && scheme != "https" {
@@ -867,7 +867,7 @@ fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
 
     let port = parsed.port().unwrap_or(if use_tls { 443 } else { 80 });
-    let port_str = port);
+    let port_str = port.as_str();
     let path = parsed.path().to_string()
         + if let Some(q) = parsed.query() {
             &format!("?{}", q)
@@ -964,7 +964,7 @@ fn fetch_async_impl(
         };
         conn_state_for_state.on_state_change(state, error_msg);
     });
-    let state_handler_block = state_handler);
+    let state_handler_block = state_handler.as_str();
 
     unsafe {
         nw_connection_set_state_changed_handler(
@@ -1046,7 +1046,7 @@ fn fetch_async_impl(
         };
         send_conn_state.on_send_done(error_msg);
     });
-    let send_handler_block = send_handler);
+    let send_handler_block = send_handler.as_str();
 
     unsafe {
         nw_connection_send(
@@ -1082,7 +1082,7 @@ fn fetch_async_impl(
     }
 
     if let Some(ref err) = send_error {
-        let err = err);
+        let err = err.as_str();
         unsafe { nw_connection_cancel(connection) };
         drop(send_handler_block);
         drop(state_handler_block);
@@ -1117,7 +1117,7 @@ fn fetch_async_impl(
             }
         },
     );
-    let recv_handler_block = recv_handler);
+    let recv_handler_block = recv_handler.as_str();
 
     // Initiate receive
     unsafe {
@@ -1548,7 +1548,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
 
     let port = parsed.port().unwrap_or(443);
-    let port_str = port);
+    let port_str = port.as_str();
     let path = parsed.path().to_string()
         + if let Some(q) = parsed.query() {
             &format!("?{}", q)
@@ -1610,7 +1610,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         }
         conn_state_for_block.cv);
     });
-    let state_handler_block = state_handler);
+    let state_handler_block = state_handler.as_str();
 
     unsafe {
         nw_connection_set_state_changed_handler(
@@ -1677,7 +1677,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
             *em = Some("QUIC send failed".to_string());
         }
     });
-    let send_handler_block = send_handler);
+    let send_handler_block = send_handler.as_str();
 
     unsafe {
         nw_connection_send(
@@ -1692,7 +1692,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     // Wait for send to complete
     let send_deadline = Instant::now() + timeout;
     loop {
-        let done = *conn_state.send_done);
+        let done = *conn_state.send_done.as_str();
         if done {
             break;
         }
@@ -1710,7 +1710,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     }
 
     if let Some(ref err) = *conn_state.send_error.lock() {
-        let err = err);
+        let err = err.as_str();
         unsafe { nw_connection_cancel(connection) };
         drop(send_handler_block);
         drop(state_handler_block);
@@ -1746,7 +1746,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
             }
         },
     );
-    let recv_handler_block = recv_handler);
+    let recv_handler_block = recv_handler.as_str();
 
     unsafe {
         nw_connection_receive(
@@ -1771,7 +1771,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         return result;
     }
 
-    let response_bytes = conn_state);
+    let response_bytes = conn_state.as_str();
 
     unsafe { nw_connection_cancel(connection) };
     drop(recv_handler_block);

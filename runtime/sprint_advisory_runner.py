@@ -44,11 +44,9 @@ from compat.msgspec_gc_compat import Struct
 
 __all__ = ["SprintAdvisoryRunner", "AdvisoryRunOutcome", "build_search_documents_from_findings"]
 log = logging.getLogger(__name__)
-try:
-    from hledac.universal.utils.source_types import SourceType
-except ImportError:
-    SourceType = None
+SourceType = lazy_import("hledac.universal.utils.source_types:SourceType", default=None)
 from hledac.universal._core.env_config import ENV
+from hledac.universal.utils.optional_imports import lazy_import
 
 MAX_PIVOTS: int = 20
 _ADVISORY_PARALLEL_SEMAPHORE_LIMIT: int = 4
@@ -106,7 +104,8 @@ def build_search_documents_from_findings(findings: list) -> list:
     from hledac.universal.knowledge.search_index import SearchDocument
 
     MAX_INDEXED_FINDINGS = 5000
-    seen_urls: set[str] = set()
+    from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
+    seen_urls = make_url_dedup(capacity=50_000)
     docs: list = []
     for f in findings:
         if len(docs) >= MAX_INDEXED_FINDINGS:

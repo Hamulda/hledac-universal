@@ -465,7 +465,7 @@ class RustMiner:
 
                             href = urljoin(base_url, href)
                         try:
-                            text_elem = tree.xpath(f'//a[@href="{href}"]/text()')
+                            text_elem = tree.xpath('//a[@href=$href]/text()', href=href)
                             text = " ".join(text_elem).strip()[:120] if text_elem else ""
                         except Exception:
                             text = ""

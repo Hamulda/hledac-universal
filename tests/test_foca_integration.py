@@ -196,7 +196,7 @@ class TestFOCADocumentIntelligenceSeam:
 
     def test_office_analyzer_has_analyze_async(self) -> None:
         """Test OfficeDocumentAnalyzer has async analyze method."""
-        from intelligence.document_intelligence import OfficeDocumentAnalyzer
+        from hledac.universal.recon.document_intelligence import OfficeDocumentAnalyzer
 
         analyzer = OfficeDocumentAnalyzer()
         assert hasattr(analyzer, "analyze_async")
@@ -205,7 +205,7 @@ class TestFOCADocumentIntelligenceSeam:
     @pytest.mark.asyncio
     async def test_office_analyzer_analyze_async_merges_foca(self, tmp_path) -> None:
         """Test analyze_async() calls FOCA extractor and merges into raw_metadata."""
-        from intelligence.document_intelligence import OfficeDocumentAnalyzer
+        from hledac.universal.recon.document_intelligence import OfficeDocumentAnalyzer
 
         # Create minimal PPTX
         pptx_path = tmp_path / "test.pptx"
@@ -228,7 +228,7 @@ class TestFOCADocumentIntelligenceSeam:
 
     def test_office_analyzer_analyze_sync_works(self, tmp_path) -> None:
         """Test sync analyze() still works without FOCA (no async needed)."""
-        from intelligence.document_intelligence import OfficeDocumentAnalyzer
+        from hledac.universal.recon.document_intelligence import OfficeDocumentAnalyzer
 
         # Create minimal PPTX
         pptx_path = tmp_path / "test.pptx"
@@ -251,7 +251,7 @@ class TestFOCADocumentIntelligenceSeam:
     @pytest.mark.asyncio
     async def test_office_analyzer_foca_merge_does_not_crash_on_missing_extractor(self, tmp_path) -> None:
         """Test FOCA merge fails gracefully when extractor unavailable."""
-        from intelligence.document_intelligence import OfficeDocumentAnalyzer
+        from hledac.universal.recon.document_intelligence import OfficeDocumentAnalyzer
 
         pptx_path = tmp_path / "test.pptx"
         with zipfile.ZipFile(pptx_path, "w") as zf:
@@ -270,7 +270,7 @@ class TestFOCADocumentIntelligenceSeam:
     @pytest.mark.asyncio
     async def test_office_analyzer_close_fail_safe(self) -> None:
         """Test close() is async and fail-safe."""
-        from intelligence.document_intelligence import OfficeDocumentAnalyzer
+        from hledac.universal.recon.document_intelligence import OfficeDocumentAnalyzer
 
         analyzer = OfficeDocumentAnalyzer()
         # close() should not raise even if extractor never initialized

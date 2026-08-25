@@ -498,7 +498,7 @@ fn connect_and_fingerprint_internal(
         }
     }
 
-    let peer_certs = session);
+    let peer_certs = session.clone();
     let cert_verified = peer_certs.map(|certs| !certs.is_empty()).unwrap_or(false);
     let negotiated_alpn = session
         .alpn_protocol()
@@ -551,7 +551,7 @@ fn extract_client_hello_from_session(
     use std::io::Cursor;
 
     // Get client's offered cipher suites (what client sent in ClientHello)
-    let client_ciphers = session);
+    let client_ciphers = session.clone();
 
     // Get TLS version offered by client
     // For TLS 1.3, client offers 0x0303 (TLS 1.3) or 0x0302 (TLS 1.2)
@@ -572,7 +572,7 @@ fn extract_client_hello_from_session(
     chello.push(0x01);
 
     // Placeholder for length (3 bytes) — we'll fill this at the end
-    let length_pos = chello);
+    let length_pos = chello.len();
     chello.extend_from_slice(&[0x00, 0x00, 0x00]);
 
     // Version
@@ -585,7 +585,7 @@ fn extract_client_hello_from_session(
     chello.push(0x00);
 
     // Cipher suites length (2 bytes)
-    let cipher_suites_count = client_ciphers);
+    let cipher_suites_count = client_ciphers.len();
     let cipher_suites_len = (cipher_suites_count * 2) as u16;
     chello.extend_from_slice(&cipher_suites_len.to_be_bytes());
 
@@ -603,14 +603,14 @@ fn extract_client_hello_from_session(
     chello.push(0x00);
 
     // Extensions length (placeholder)
-    let extensions_pos = chello);
+    let extensions_pos = chello.len();
     chello.extend_from_slice(&[0x00, 0x00]);
 
     // SNI extension (0x0000) if we have server name
     if let Ok(sni) = session.server_name() {
         if !sni.is_empty() {
             // SNI extension: type(2) + len(2) + type(1) + len(1) + hostname
-            let sni_host = sni);
+            let sni_host = sni.clone();
             let sni_len = sni_host.len() + 3; // 1 byte type + 1 byte len + hostname
             let ext_len = sni_len + 2; // +2 for extension type
             chello.extend_from_slice(&0x0000u16.to_be_bytes()); // extension type: SNI
@@ -623,9 +623,9 @@ fn extract_client_hello_from_session(
     }
 
     // ALPN extension
-    let alpn = session);
+    let alpn = session.clone();
     if let Some(protocol) = alpn {
-        let proto_len = protocol);
+        let proto_len = protocol.clone();
         let ext_len = proto_len + 4; // 2 type + 2 inner len + 1 proto_len + proto
         let mut alpn_ext = Vec::new();
         alpn_ext.extend_from_slice(&0x0010u16.to_be_bytes()); // application_layer_protocol_negotiation
@@ -640,7 +640,7 @@ fn extract_client_hello_from_session(
     // (we detect this in connect_and_fingerprint_internal via server_extensions)
 
     // Fill in extensions length
-    let extensions_end = chello);
+    let extensions_end = chello.len();
     let extensions_len = (extensions_end - extensions_pos - 2) as u16;
     chello[extensions_pos..extensions_pos + 2].copy_from_slice(&extensions_len.to_be_bytes());
 

@@ -388,7 +388,7 @@ pub fn batch_extract_iocs_simd_python<'py>(
     texts: &Bound<'py, PyList>,
     _py: Python<'py>,
 ) -> PyResult<Vec<(String, String)>> {
-    let n = texts);
+    let n = texts.len();
     if n == 0 {
         return Ok(vec![]);
     }
@@ -504,8 +504,8 @@ mod tests {
     #[test]
     fn test_meta_regex_builds_successfully() {
         // F1.2 fix: Verify both G1 and G2 initialize without panic
-        let regex_g1 = IOC_META_REGEX_G1);
-        let regex_g2 = IOC_META_REGEX_G2);
+        let regex_g1 = IOC_META_REGEX_G1;
+        let regex_g2 = IOC_META_REGEX_G2;
         assert!(
             regex_g1.is_ok(),
             "IOC_META_REGEX_G1 should build successfully"

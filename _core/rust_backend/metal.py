@@ -10,10 +10,6 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-
-
-
 class _PythonMetalDomainInner:
     """Python fallback for Metal/GPU scanning operations."""
 

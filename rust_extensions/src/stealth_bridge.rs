@@ -144,7 +144,7 @@ pub fn dns_resolve_async(
     qtype: Option<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
     let _qtype = qtype.unwrap_or_else(|| "A".to_string());
-    let hostname_clone = hostname);
+    let hostname_clone = hostname.as_str();
 
     future_into_py(py, async move {
         // Use tokio's async DNS lookup (system resolver)
@@ -179,7 +179,7 @@ pub fn dns_resolve_batch_async(
     hostnames: Vec<String>,
     qtype: Option<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let hostnames_clone = hostnames);
+    let hostnames_clone = hostnames.as_str();
     let _qtype = qtype.unwrap_or_else(|| "A".to_string());
 
     future_into_py(py, async move {
@@ -193,7 +193,7 @@ pub fn dns_resolve_batch_async(
         let mut handles = Vec::with_capacity(hostnames_clone.len());
 
         for h in &hostnames_clone {
-            let host = h);
+            let host = h.as_str();
             let handle = handle.spawn(async move {
                 let ips = tokio::net::lookup_host((host.as_str(), 0))
                     .await
@@ -286,15 +286,15 @@ pub fn encode_response_metadata_arrow(
     let mut buf = Vec::new();
 
     // Simple binary format: URL len (4B) + URL + status (2B) + headers count (4B) + headers + timing (8B)
-    let url_bytes = url);
+    let url_bytes = url.as_str();
     buf.write_all(&(url_bytes.len() as u32).to_le_bytes()));
     buf.write_all(url_bytes));
     buf.write_all(&status.to_le_bytes()));
     buf.write_all(&(headers.len() as u32).to_le_bytes()));
 
     for (k, v) in headers {
-        let k_bytes = k);
-        let v_bytes = v);
+        let k_bytes = k.as_str();
+        let v_bytes = v.as_str();
         buf.write_all(&(k_bytes.len() as u32).to_le_bytes()));
         buf.write_all(k_bytes));
         buf.write_all(&(v_bytes.len() as u32).to_le_bytes()));

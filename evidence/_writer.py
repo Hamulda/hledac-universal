@@ -35,20 +35,6 @@ class EvidenceEvent(Struct, frozen=False):
     Tamper-evident: hash chain links events to prior state.
     """
 
-    __slots__ = (
-        "event_id",
-        "event_type",
-        "timestamp",
-        "payload",
-        "run_id",
-        "source_ids",
-        "confidence",
-        "content_hash",
-        "seq_no",
-        "prev_chain_hash",
-        "chain_hash",
-    )
-
     event_id: str
     event_type: str
     timestamp: float

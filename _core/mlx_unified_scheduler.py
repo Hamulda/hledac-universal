@@ -742,7 +742,7 @@ class MLXUnifiedScheduler:
         try:
             import mlx.core as mx
 
-            await asyncio.to_thread(mx.eval)
+            await asyncio.to_thread(mx.eval, [])
             if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
             elif hasattr(mx.metal, "clear_cache"):

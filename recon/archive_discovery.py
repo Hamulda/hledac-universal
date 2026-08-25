@@ -1652,20 +1652,25 @@ class WaybackCDX:
             List of CommonCrawlSnapshot objects
         """
         results: list[CommonCrawlSnapshot] = []
-        try:
-            async with httpx.AsyncClient() as session:
-                col_info = await self._select_cdn_for_crawl(session)
-                if not col_info:
-                    return results
+        # ISSUE #8: pooled client — the CDX index + collection endpoints are all
+        # on index.commoncrawl.org, so one multiplexed H2 connection serves the
+        # whole loop instead of a fresh TLS handshake per query.
+        from hledac.universal.transport.client_pool import get_or_create_httpx_client
 
-                for col in col_info[:3]:
-                    cdo = col.get("cdx-api", "")
-                    if not cdo:
-                        continue
-                    cdo_results = await self._process_crawl_response(session, cdo, domain, limit)
-                    results.extend(cdo_results)
-                    if len(results) >= limit:
-                        break
+        try:
+            session = await get_or_create_httpx_client("clearnet")
+            col_info = await self._select_cdn_for_crawl(session)
+            if not col_info:
+                return results
+
+            for col in col_info[:3]:
+                cdo = col.get("cdx-api", "")
+                if not cdo:
+                    continue
+                cdo_results = await self._process_crawl_response(session, cdo, domain, limit)
+                results.extend(cdo_results)
+                if len(results) >= limit:
+                    break
         except Exception as e:
             logger.debug(f"query_common_crawl({domain}): {e}")
         return results[:limit]

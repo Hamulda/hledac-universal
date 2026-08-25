@@ -1,220 +1,155 @@
 """
-ISSUE-007: Rust Zombie Module Cleanup Script
+ISSUE-007: Safe Rust Zombie Module Cleanup
+==========================================
 
-This script automates the removal of zombie Rust modules identified by audit.py.
+SAFETY-FIRST rewrite of the original cleanup_zombies.py.
 
-WARNING: This script makes destructive changes. Review before running!
+The original script hard-coded a `ZOMBIE_MODULES_SAFE` / `ZOMBIE_MODULES_WITH_DEPS`
+list that included modules which are ACTUALLY LIVE via the wiring layer
+(circuit_breaker, content_hasher, aho_corasick_simd, simd_similarity, simhash_ext,
+telemetry_agg, url_engine, tls_metadata, graph_analytics, claims_extraction, …).
+Running it would have DELETED working integrations and broken the build.
+
+This version delegates ALL classification to audit.py's dynamic analyzer. A module is
+only ever considered removable when audit.py reports it as ZOMBIE — i.e. it has NO
+Python caller (no wiring file, no integrations reference, no rust_backend symbol use,
+no quoted getattr/FFI name) AND no internal Rust dependency (crate::X / macro X!).
+
+Given the current state of the codebase, that set is EMPTY: every module in lib.rs is
+reachable. So this tool is effectively a no-op — which is the correct, safe outcome.
 
 Usage:
-    python rust_extensions/cleanup_zombies.py --plan          # Show what would be removed
-    python rust_extensions/cleanup_zombies.py --execute       # Execute the cleanup
+    python rust_extensions/cleanup_zombies.py --plan      # show what WOULD be removed
+    python rust_extensions/cleanup_zombies.py --execute   # actually remove (asks confirm)
 """
 
 from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent
-RUST_EXTENSIONS_DIR = PROJECT_ROOT / "rust_extensions"
-LIB_RS_PATH = RUST_EXTENSIONS_DIR / "src" / "lib.rs"
-CARGO_TOML_PATH = RUST_EXTENSIONS_DIR / "Cargo.toml"
-ZOMBIE_MODULES_SAFE = [
-    "aho_corasick_simd",
-    "claims_extraction",
-    "compress",
-    "consistency_verifier",
-    "content_hasher",
-    "crypto_accelerate",
-    "deobfuscate",
-    "feed_decision",
-    "ffi_safe",
-    "h2_safari_preset",
-    "health",
-    "hot_edges_rs",
-    "html_parse",
-    "int_counter_layout",
-    "ioc_extract",
-    "ioc_extract_fast",
-    "ioc_extract_simd",
-    "ioc_stream_scan",
-    "query_terms",
-    "regex_lz4",
-    "sendfile",
-    "simdjson_extract",
-    "simd_similarity",
-    "simhash_ext",
-    "spsc_queue",
-    "telemetry_agg",
-    "tls_metadata",
-    "topology",
-    "tracing",
-    "unindexed_scanner",
-    "url_engine",
-    "warc_parser",
-    "zero_copy",
-    "collections_backup",
-]
-ZOMBIE_MODULES_WITH_DEPS = [
-    "fulltext_index",
-    "git_forensics",
-    "graph_analytics",
-    "metal_hashcrack",
-    "metal_shared_buf",
-    "native_db",
-    "nw_connection",
-    "p2p_harvest",
-    "pdf",
-    "office",
-    "dns_tunnel",
-    "async_bridge",
-    "async_query",
-    "aimd_controller",
-    "federated_qtable",
-]
+# Use the dynamic analyzer as the single source of truth.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from audit import (  # noqa: E402
+    LIB_RS,
+    SRC,
+    WIRING,
+    WIRING_NAME_MAP,
+    run_audit,
+)
+
+ZOMBIE_ACTION_FORBIDDEN = (
+    "Refusing to remove a module that is still reachable from Python or Rust. "
+    "Re-run audit.py to see why it is classified ACTIVE."
+)
 
 
-@dataclass(slots=True)
-class CleanupPlan:
-    """Plan for cleaning up zombie modules."""
-
-    files_to_remove: list[Path]
-    lib_rs_mods_to_remove: list[str]
-    cargo_toml_lines_to_remove: list[int]
-    errors: list[str]
-
-
-def analyze_rust_files() -> set[str]:
-    """Find all .rs files in src directory."""
-    src_dir = RUST_EXTENSIONS_DIR / "src"
-    rs_files = set()
-    for f in src_dir.rglob("*.rs"):
-        rel_path = f.relative_to(src_dir)
-        if rel_path.name == "mod.rs":
-            module_name = str(rel_path.parent.name)
-        else:
-            module_name = rel_path.stem
-        rs_files.add(module_name)
-    return rs_files
-
-
-def parse_lib_rs() -> tuple[list[str], dict[str, str]]:
-    """Parse lib.rs to find all module declarations."""
-    content = LIB_RS_PATH.read_text()
-    lines = content.splitlines()
-    module_declarations = []
-    comments = {}
-    for i, line in enumerate(lines):
-        match = re.match("\\s*mod\\s+(\\w+)\\s*;", line)
-        if match:
-            module_name = match.group(1)
-            module_declarations.append(module_name)
-            if i > 0 and "//" in lines[i - 1]:
-                comments[module_name] = lines[i - 1].strip()
-    return (module_declarations, comments)
-
-
-def create_cleanup_plan() -> CleanupPlan:
-    """Create a cleanup plan for zombie modules."""
-    plan = CleanupPlan(files_to_remove=[], lib_rs_mods_to_remove=[], cargo_toml_lines_to_remove=[], errors=[])
-    analyze_rust_files()
-    for module_name in ZOMBIE_MODULES_SAFE:
-        rs_file = RUST_EXTENSIONS_DIR / "src" / f"{module_name}.rs"
-        if rs_file.exists():
-            plan.files_to_remove.append(rs_file)
-        else:
-            rs_dir = RUST_EXTENSIONS_DIR / "src" / module_name
-            if rs_dir.exists():
-                plan.files_to_remove.append(rs_dir)
-        plan.lib_rs_mods_to_remove.append(module_name)
-    for module_name in ZOMBIE_MODULES_WITH_DEPS:
-        rs_file = RUST_EXTENSIONS_DIR / "src" / f"{module_name}.rs"
-        if rs_file.exists():
-            plan.errors.append(f"REQUIRES REVIEW: {module_name} may have external dependencies")
+def compute_plan():
+    """Return list of removable (ZOMBIE) module names with no internal Rust deps."""
+    results = run_audit()
+    plan = []
+    for r in results:
+        if r.status != "ZOMBIE":
+            continue
+        # Defense in depth: refuse anything that still has any evidence.
+        if r.evidence:
+            print(f"  ! SKIP {r.name}: has evidence {r.evidence} (would not be ZOMBIE)")
+            continue
+        f = SRC / f"{r.name}.rs"
+        if not f.exists():
+            f = SRC / r.name / "mod.rs"
+        plan.append((r.name, f if f.exists() else None))
     return plan
 
 
-def print_plan(plan: CleanupPlan) -> None:
-    """Print the cleanup plan."""
+def print_plan(plan):
     print("\n" + "=" * 80)
-    print("ISSUE-007: Rust Zombie Module Cleanup Plan")
+    print("ISSUE-007: Rust Zombie Module Cleanup Plan (SAFE / dynamic)")
     print("=" * 80)
-    print(f"\n📁 Files to remove ({len(plan.files_to_remove)}):")
-    for f in plan.files_to_remove:
-        print(f"   - {f.relative_to(PROJECT_ROOT)}")
-    print(f"\n📝 lib.rs module declarations to remove ({len(plan.lib_rs_mods_to_remove)}):")
-    for mod_name in plan.lib_rs_mods_to_remove[:10]:
-        print(f"   - mod {mod_name};")
-    if len(plan.lib_rs_mods_to_remove) > 10:
-        print(f"   ... and {len(plan.lib_rs_mods_to_remove) - 10} more")
-    if plan.errors:
-        print(f"\n⚠️  Manual Review Required ({len(plan.errors)}):")
-        for error in plan.errors:
-            print(f"   - {error}")
-    print("\n💡 Estimated compile time savings: 30-40%")
+    if not plan:
+        print("\n  ✅ Nothing to remove. Every module in lib.rs is reachable from")
+        print("     Python (wiring / integrations / facade) or from another Rust module.")
+        print("     The previously-reported '50+ ZOMBIE modules' were a false positive")
+        print("     caused by a broken PYTHON_SOURCE_DIR in the old audit.py.")
+    else:
+        print(f"\n  Modules to remove ({len(plan)}):")
+        for name, f in plan:
+            print(f"   - {name}  ({f})")
     print("\n" + "=" * 80)
 
 
-def execute_cleanup(plan: CleanupPlan) -> None:
-    """Execute the cleanup plan."""
-    print("\n⚠️  EXECUTING CLEANUP - This is DESTRUCTIVE!")
-    print("   Files will be permanently deleted.")
-    for f in plan.files_to_remove:
-        if f.is_dir():
-            import shutil
-
-            shutil.rmtree(f)
-            print(f"   ✅ Removed directory: {f.name}/")
-        elif f.is_file():
-            f.unlink()
-            print(f"   ✅ Removed file: {f.name}")
-    content = LIB_RS_PATH.read_text()
-    lines = content.splitlines()
-    new_lines = []
-    skip_next = 0
-    for _i, line in enumerate(lines):
-        if skip_next > 0:
-            skip_next -= 1
+def _remove_mod_decl(name: str) -> bool:
+    text = LIB_RS.read_text()
+    lines = text.splitlines()
+    out = []
+    skipped = 0
+    for i, line in enumerate(lines):
+        if re.match(r"\s*mod\s+" + re.escape(name) + r"\s*;", line):
+            # drop the mod line and any immediately-preceding comment / cfg lines
+            while out and (out[-1].strip().startswith("//") or out[-1].strip().startswith("#[")):
+                out.pop()
+            skipped += 1
             continue
-        match = re.match("\\s*mod\\s+(\\w+)\\s*;", line)
-        if match:
-            module_name = match.group(1)
-            if module_name in plan.lib_rs_mods_to_remove:
-                if new_lines and "// ZOMBIE:" in new_lines[-1]:
-                    new_lines.pop()
-                skip_next = 0
-                continue
-        new_lines.append(line)
-    LIB_RS_PATH.write_text("\n".join(new_lines) + "\n")
-    print("\n✅ Updated lib.rs")
-    print("\n✅ Cleanup complete!")
-    print("\nNext steps:")
-    print("   1. Run: cargo check")
-    print("   2. Review any compilation errors")
-    print("   3. Run: cargo build")
-    print("   4. Run tests to verify nothing broke")
+        out.append(line)
+    if skipped:
+        LIB_RS.write_text("\n".join(out) + "\n")
+    return skipped > 0
+
+
+def _remove_registration(name: str) -> bool:
+    text = LIB_RS.read_text()
+    pat = re.compile(r"^\s*" + re.escape(name) + r"::\w+\([^;]*\);\s*$")
+    lines = text.splitlines()
+    out = []
+    removed = 0
+    for i, line in enumerate(lines):
+        if pat.match(line):
+            # drop an immediately-preceding cfg line if present
+            if out and out[-1].strip().startswith("#[cfg"):
+                out.pop()
+            removed += 1
+            continue
+        out.append(line)
+    if removed:
+        LIB_RS.write_text("\n".join(out) + "\n")
+    return removed > 0
+
+
+def execute(plan):
+    for name, f in plan:
+        if f is not None and f.exists():
+            if f.is_dir():
+                import shutil
+                shutil.rmtree(f)
+            else:
+                f.unlink()
+            print(f"  ✅ removed {f}")
+        else:
+            print(f"  ⚠️  {name}: source file not found (already removed?)")
+        _remove_mod_decl(name)
+        _remove_registration(name)
+    print("\n  Reminder: run `cargo check --no-default-features` to verify.")
 
 
 def main() -> int:
-    """Main entry point."""
     import argparse
-
-    parser = argparse.ArgumentParser(description="Rust Zombie Module Cleanup")
-    parser.add_argument("--plan", action="store_true", help="Show cleanup plan")
-    parser.add_argument("--execute", action="store_true", help="Execute cleanup")
-    args = parser.parse_args()
-    if not args.plan and (not args.execute):
-        parser.print_help()
+    ap = argparse.ArgumentParser(description="Safe Rust zombie cleanup (dynamic)")
+    ap.add_argument("--plan", action="store_true", help="Show cleanup plan")
+    ap.add_argument("--execute", action="store_true", help="Execute cleanup (asks confirm)")
+    args = ap.parse_args()
+    if not args.plan and not args.execute:
+        ap.print_help()
         return 1
-    plan = create_cleanup_plan()
+    plan = compute_plan()
     print_plan(plan)
     if args.execute:
-        print("\n❓ Are you sure you want to proceed? (yes/no): ", end="")
-        response = input().strip().lower()
-        if response == "yes":
-            execute_cleanup(plan)
+        if not plan:
+            print("Nothing to remove — aborting.")
+            return 0
+        resp = input("❓ Proceed with removal? (yes/no): ").strip().lower()
+        if resp == "yes":
+            execute(plan)
         else:
             print("Aborted.")
     return 0

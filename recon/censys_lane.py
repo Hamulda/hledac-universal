@@ -19,11 +19,11 @@ GHOST_INVARIANTS:
 
 import base64
 import logging
-import os
 import time
 
 import httpx
 
+from hledac.universal._core.env_config import ENV
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 # DRY: Shared search lane utilities (DRY-2026-08-07)
@@ -45,15 +45,22 @@ RATE_LIMIT_KEY = "censys_api"
 # [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
 # Censys free tier is 0.4 req/s (2.5s between requests). Sigma = 0.6s
 # keeps well within rate limits while decorrelating bursts.
-_CENSYS_JITTER_SIGMA_S: float = float(os.environ.get("HLEDAC_CENSYS_JITTER_SIGMA_S", "0.6"))
+_CENSYS_JITTER_SIGMA_S: float = ENV.get_float("HLEDAC_CENSYS_JITTER_SIGMA_S", default=0.6)
 
 # F266: Circuit breaker — domain for Censys API
 _CB_DOMAIN = "search.censys.io"
 
 
 def _get_credentials() -> tuple[str | None, str | None]:
-    api_id = os.environ.get("CENSYS_API_ID") or None
-    api_secret = os.environ.get("CENSYS_SECRET") or None
+    """Resolve Censys credentials via the canonical HLEDAC_* names.
+
+    L2 fix: this lane previously read ``CENSYS_SECRET`` while
+    ``recon/exposure_clients.py`` read ``CENSYS_API_SECRET``, so a secret set
+    under one name was invisible to the other lane. Both are now aliases of
+    ``HLEDAC_CENSYS_API_SECRET``.
+    """
+    api_id = ENV.get_api_key("HLEDAC_CENSYS_API_ID") or None
+    api_secret = ENV.get_api_key("HLEDAC_CENSYS_API_SECRET") or None
     return api_id, api_secret
 
 

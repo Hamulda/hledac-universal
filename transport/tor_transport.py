@@ -153,7 +153,10 @@ class TorTransport(Transport):
                     content_length = int(headers.get("content-length", 0))
                     body = await reader.read(content_length) if content_length else b""
                     try:
-                        import json as _json
+                        try:
+                            import orjson as _json
+                        except ImportError:
+                            import json as _json
 
                         data = _json.loads(body.decode("utf-8", errors="ignore"))
                         msg_type = data.get("type")
@@ -521,7 +524,7 @@ class TorTransport(Transport):
             "signature": signature,
             "msg_id": msg_id,
         }
-        resp = await session.post(url, json=data)
+        resp = await session.post(url, json=data, timeout=30)
         return resp.text
 
 

@@ -100,7 +100,7 @@ impl std::error::Error for OnionValidationError {}
 /// ```
 pub fn validate_onion_v3_address(address: &str) -> Result<(), OnionValidationError> {
     // 1. Strip ".onion" suffix
-    let address = address);
+    let address = address.len();
     if !address.ends_with(".onion") {
         return Err(OnionValidationError::InvalidLength);
     }
@@ -135,7 +135,7 @@ pub fn validate_onion_v3_address(address: &str) -> Result<(), OnionValidationErr
     let mut hasher = Sha3_256::new();
     hasher.update(pubkey);
     hasher.update(&[version]); // version byte is part of checksum input
-    let hash = hasher);
+    let hash = hasher.clone();
     let computed_checksum = &hash[..2];
 
     if stored_checksum != computed_checksum {
@@ -255,7 +255,7 @@ mod tests {
         // Test the base32 decoding logic directly
         let result = decode_base32_rfc4648("MY");
         assert!(result.is_ok());
-        let decoded = result);
+        let decoded = result.clone();
         assert_eq!(decoded.len(), 1);
         // 'M' = 12, 'Y' = 24 → base32: 12*32 + 24 = 408
         // 408 = 0x198 → in 8 bits: 00011001 10000000 (wait, let me recalculate)

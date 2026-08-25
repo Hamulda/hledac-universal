@@ -19,6 +19,7 @@ from typing import Any
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
+from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
 from .base import UniversalCoordinator
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ class ArchiveCoordinator(UniversalCoordinator):
         super().__init__(name="ArchiveCoordinator", max_concurrent=max_concurrent)
         self._config = config or ArchiveCoordinatorConfig()
         self._pending_urls: deque = deque(maxlen=MAX_PENDING_URLS)
-        self._seen_urls: set[str] = set()
+        self._seen_urls = make_url_dedup(capacity=MAX_PENDING_URLS)
         self._escalations_executed: int = 0
         self._urls_emitted: int = 0
         self._stop_reason: str | None = None
@@ -101,8 +102,10 @@ class ArchiveCoordinator(UniversalCoordinator):
         self._orchestrator = ctx.get("orchestrator")
         if "pending_urls" in ctx:
             incoming = ctx["pending_urls"]
-            self._pending_urls = deque(incoming, maxlen=MAX_PENDING_URLS)
-            self._seen_urls = set(incoming)
+        self._pending_urls = deque(incoming, maxlen=MAX_PENDING_URLS)
+        self._seen_urls = make_url_dedup(capacity=MAX_PENDING_URLS)
+        for u in incoming:
+            self._seen_urls.add(u)
         logger.info(f"ArchiveCoordinator started with {len(self._pending_urls)} pending URLs")
 
     async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:

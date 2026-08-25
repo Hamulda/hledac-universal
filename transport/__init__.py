@@ -55,6 +55,13 @@ _IMPORT_DISPATCH: dict[str, tuple[str, tuple[str, ...]] | tuple[str, str]] = {
     "Profile": (".http_client", "Profile"),
     "QoS": (".http_client", "QoS"),
     "get_semaphore_telemetry": (".http_client", "get_semaphore_telemetry"),
+    # ISSUE #8: profile-based shared httpx client pool.
+    # ONLY sanctioned way to obtain an httpx client outside transport/.
+    "get_or_create_httpx_client": (".client_pool", "get_or_create_httpx_client"),
+    "ClientProfile": (".client_pool", "ClientProfile"),
+    "close_all_clients": (".client_pool", "close_all_clients"),
+    "close_stealth_client": (".client_pool", "close_stealth_client"),
+    "get_client_pool_status": (".client_pool", "get_client_pool_status"),
 }
 
 _SUBMODULE_DISPATCH: dict[str, str] = {

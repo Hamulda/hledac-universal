@@ -31,11 +31,9 @@ from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.encoding import decode_response_bytes
 
-try:
-    from hledac.universal.utils.source_types import SourceType
-except ImportError:
-    SourceType = None
+SourceType = lazy_import("hledac.universal.utils.source_types:SourceType", default=None)
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.utils.optional_imports import lazy_import
 
 logger = logging.getLogger(__name__)
 ALT_PROTOCOLS_ENABLED: bool = os.getenv("HLEDAC_ENABLE_ALT_PROTOCOLS", "0").lower() in ("1", "true", "yes", "on")

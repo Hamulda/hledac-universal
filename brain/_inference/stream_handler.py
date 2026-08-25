@@ -117,7 +117,7 @@ class StreamHandler:
                 except asyncio.QueueFull:
                     pass
 
-        producer_task = asyncio.create_task(producer())
+        producer_task = safe_create_task(producer())
         try:
             while True:
                 try:

@@ -93,7 +93,7 @@ pub fn batch_ip_classify(ips: Vec<String>) -> Vec<u8> {
         return vec![];
     }
 
-    let n = ips);
+    let n = ips.clone();
     let _results_cap = n;
 
     let batch: Vec<&[String]> = ips.chunks(BATCH_MAX));

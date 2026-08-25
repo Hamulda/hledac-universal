@@ -36,11 +36,10 @@ import httpx
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.asyncx import parallel_ok
+from hledac.universal.utils.bloom_filter import RotatingBloomFilter  # M-2026-FIX: bounded URL dedup
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-except ImportError:
-    CanonicalFinding = None
+CanonicalFinding = lazy_import("hledac.universal.knowledge.duckdb_store:CanonicalFinding", default=None)
 logger = logging.getLogger(__name__)
 MAX_CDX_RESULTS: int = 500
 MAX_CDX_RESULTS_FULL: int = 5000  # P8-003: paginated deep search cap
@@ -383,7 +382,8 @@ async def cdx_deep_search_batch(
     semaphore = asyncio.Semaphore(concurrency)
     last_request = 0.0
     all_results: list[CDXSearchResult] = []
-    seen_urls: set[str] = set()
+    # M-2026-FIX: RotatingBloomFilter replaces unbounded set[str] URL dedup.
+    seen_urls: RotatingBloomFilter = RotatingBloomFilter(max_elements=100_000, error_rate=0.005)
 
     async def _fetch_one(domain: str) -> list[CDXSearchResult]:
         nonlocal last_request
@@ -550,7 +550,8 @@ class WaybackCDXDeepSearch:
 
         # Collect results with optional deduplication
         all_results: list[CDXSearchResult] = []
-        seen_urls: set[str] = set()
+        # M-2026-FIX: bounded RBF for URL dedup.
+        seen_urls: RotatingBloomFilter = RotatingBloomFilter(max_elements=100_000, error_rate=0.005)
         for res in gathered:
             if isinstance(res, list):
                 if deduplicate:

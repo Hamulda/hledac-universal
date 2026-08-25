@@ -48,8 +48,6 @@ from typing import TYPE_CHECKING, Any
 
 from compat.msgspec_gc_compat import Struct
 
-if TYPE_CHECKING:
-
 log = logging.getLogger(__name__)
 
 # ── M1 8GB bounds ─────────────────────────────────────────────────────────────

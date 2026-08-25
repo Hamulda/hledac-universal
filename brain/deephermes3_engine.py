@@ -21,6 +21,7 @@ import logging
 import os
 import threading
 import time
+import heapq
 import weakref
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
@@ -580,6 +581,7 @@ class DeepHermes3Engine:
         "_session_cache_maxsize",
         "_session_cache_memory_mb",
         "_session_cache_pool",
+        "_session_size_heap",
         "_session_cache_stats",
         "_speculative_enabled",
         "_state_observer",
@@ -616,7 +618,7 @@ class DeepHermes3Engine:
         self._kv_cache_enabled = False
         self._prompt_cache = None
         self._max_kv_size = 8192
-        self._kv_bits = ENV.get_int("GHOST_KV_BITS", default=4)
+        self._kv_bits = ENV.get_int("HLEDAC_KV_BITS", default=4)
         self._paged_kv_cache = ENV.get_bool("HLEDAC_PAGED_KV_CACHE")
         # Paged KV keep: support both new HLEDAC_PAGED_KV_KEEP_TOKENS and legacy HLEDAC_PAGED_KV_KEEP
         _raw_keep = ENV.get_str("HLEDAC_PAGED_KV_KEEP_TOKENS") or ENV.get_str("HLEDAC_PAGED_KV_KEEP")
@@ -687,6 +689,10 @@ class DeepHermes3Engine:
         self._session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = LRUCache(
             max_size=self._session_cache_maxsize
         )
+        # M8: O(log n) max-heap of (-size_bytes, key). Root yields the largest
+        # entry in O(1) for eviction. The LRUCache remains the authority for
+        # membership/size; stale heap entries are lazily discarded on pop.
+        self._session_size_heap: list[tuple[int, str]] = []
         self._session_cache_stats = {
             "session_cache_hits": 0,
             "session_cache_misses": 0,
@@ -3086,17 +3092,27 @@ class DeepHermes3Engine:
             pool_budget_bytes = self._session_cache_memory_mb * 1024 * 1024
             total_bytes = sum(entry[3] for entry in self._session_cache_pool.values()) + cache_size
             while len(self._session_cache_pool) >= self._session_cache_maxsize or total_bytes > pool_budget_bytes:
-                if not self._session_cache_pool:
+                # Lazy-delete stale heap entries (keys evicted/updated by the
+                # underlying LRUCache outside the heap path). Root carries the
+                # largest entry (-size is smallest) => O(1) candidate lookup.
+                while self._session_size_heap:
+                    neg_size, heap_key = self._session_size_heap[0]
+                    live = self._session_cache_pool.get(heap_key)
+                    if live is None or live[3] != -neg_size:
+                        heapq.heappop(self._session_size_heap)
+                        continue
                     break
-                evicted_key = max(self._session_cache_pool, key=lambda k: self._session_cache_pool[k][3])
-                evicted_size = self._session_cache_pool[evicted_key][3]
-                self._session_cache_pool.pop(evicted_key)
+                if not self._session_cache_pool or not self._session_size_heap:
+                    break
+                _, evicted_key = heapq.heappop(self._session_size_heap)
+                evicted_size = self._session_cache_pool.pop(evicted_key)[3]
                 total_bytes -= evicted_size
                 self._session_cache_stats["session_cache_evictions"] += 1
                 logger.debug(
                     f"[SESSION-CACHE] Evicted hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB)"
                 )
             self._session_cache_pool[prompt_hash] = (kv_cache, prompt_hash, time.monotonic(), cache_size)
+            heapq.heappush(self._session_size_heap, (-cache_size, prompt_hash))
             logger.debug(f"[SESSION-CACHE] Stored for hash {prompt_hash[:8]} (size={cache_size / 1024 / 1024:.1f}MB)")
         except Exception as e:
             logger.debug(f"[SESSION-CACHE] Store failed: {e}")
@@ -3365,6 +3381,7 @@ class DeepHermes3Engine:
         self._cache_manager.sync_session_cache(self._session_cache_pool)
         self._cache_manager.sync_prefix_cache(self._prefix_cache)
         self._cache_manager.clear_all_sync()
+        self._session_size_heap.clear()
 
         # Reset engine's cache references (manager's refs already cleared by clear_all_sync)
         self._prompt_cache = None
@@ -5228,7 +5245,7 @@ class DeepHermes3Engine:
             ]
         import msgspec
 
-        class GenericResult(msgspec.Struct, kw_only=True):
+        class GenericResult(Struct, kw_only=True):
             result: str = ""
             confidence: float = 0.5
 
@@ -5655,6 +5672,7 @@ class DeepHermes3Engine:
             # Note: Manager's clear methods operate on the same cache objects (passed in __init__)
             self._cache_manager.clear_kv_cache()
             self._cache_manager.clear_session_cache()
+            self._session_size_heap.clear()
             # Engine references point to same objects - no need for redundant clear
             logger.debug("[F03][ROADMAP-001] KV cache pools cleared (keep_cache_pool=False)")
 
@@ -5662,22 +5680,24 @@ class DeepHermes3Engine:
         # Note: Manager operates on the same cache object - no redundant clear needed
         self._cache_manager.clear_prefix_cache()
 
-        # NEW-M3 FIX: Offload blocking mx.eval([]) to thread pool when in async context.
-        # mx.eval([]) is fast but can block the event loop if called frequently.
-        # Check for running loop and use to_thread to avoid blocking.
+        # NEW-M3 FIX: Offload blocking mx.eval([]) to a thread when in async context.
+        # H9: Do NOT spawn a throwaway ThreadPoolExecutor per call — on a 60s sprint
+        # with 100 turns that churns 100 threads. reset_session() is a SYNC method, so
+        # `await asyncio.to_thread(...)` is not possible here; instead reuse the event
+        # loop's SHARED default executor (one executor per process) via run_in_executor
+        # and block on the already-offloaded result. No running loop -> call directly.
         try:
-            import concurrent.futures
-
             import mlx.core as mx
 
             try:
-                asyncio.get_running_loop()
+                loop = asyncio.get_running_loop()
             except RuntimeError:
-                # No running loop — call directly (sync context)
+                # No running loop — call directly (sync context).
                 mx.eval([])
             else:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    pool.submit(mx.eval, [])
+                # Running loop: offload the (tiny) barrier to the loop's default
+                # executor, reusing one shared pool instead of a per-call pool.
+                loop.run_in_executor(None, mx.eval, []).result()
         except Exception:  # noqa: BLE001
             pass
 
@@ -5899,10 +5919,10 @@ class DeepHermes3Engine:
         """
         Build MLX generate kwargs for sustain mode using runtime introspection.
 
-        Uses GHOST_HERMES_SUSTAIN=1 env flag and inspects generate_fn signature
+        Uses HLEDAC_HERMES_SUSTAIN=1 env flag and inspects generate_fn signature
         to add only supported kwargs.
         """
-        sustain_flag = ENV.get_str("GHOST_HERMES_SUSTAIN")
+        sustain_flag = ENV.get_str("HLEDAC_HERMES_SUSTAIN")
         if sustain_flag != "1":
             return {}
         try:
@@ -5914,7 +5934,7 @@ class DeepHermes3Engine:
             has_var_keyword = False
         kwargs = {}
         if "max_kv_size" in param_names or has_var_keyword:
-            kwargs["max_kv_size"] = ENV.get_int("GHOST_KV_SIZE", default=4096)
+            kwargs["max_kv_size"] = ENV.get_int("HLEDAC_KV_SIZE", default=4096)
         if "kv_cache_type" in param_names:
             kwargs["kv_cache_type"] = "rotating"
         if "attention_sink_size" in param_names:
@@ -5951,7 +5971,7 @@ class DeepHermes3Engine:
         }
         for k, v in sustain_kwargs.items():
             generate_kwargs[k] = v
-        if ENV.get_bool("GHOST_PREFIX_CACHE_EXPERIMENT"):
+        if ENV.get_bool("HLEDAC_PREFIX_CACHE_EXPERIMENT"):
             try:
                 from mlx_lm.models.cache import make_prompt_cache
 
@@ -6184,10 +6204,9 @@ class DeepHermes3Engine:
         if self._outlines_model is None:
             return False
         try:
-            import msgspec
             import outlines.generate as og
 
-            class _ProbeSchema(msgspec.Struct):
+            class _ProbeSchema(Struct):
                 ok: bool
 
             gen = og.json(self._outlines_model, _ProbeSchema)

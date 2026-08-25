@@ -3,11 +3,9 @@
 import threading
 from collections.abc import Sequence
 from typing import Any
+from hledac.universal.utils.optional_imports import lazy_import
 
-try:
-    from opentelemetry.sdk.trace.export import SpanExportResult
-except ImportError:
-    SpanExportResult = None
+SpanExportResult = lazy_import("opentelemetry.sdk.trace.export:SpanExportResult", default=None)
 
 # WIRING_COMPLETE I2: Lock-free Rust counters for hot-path telemetry
 try:

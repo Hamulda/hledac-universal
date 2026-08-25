@@ -30,6 +30,10 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from _core.locks import LockCategory, register_lock
+from hledac.universal.utils.concurrency import _get_bg_loop
+
+# Retain references to fire-and-forget session-close tasks.
+_SESSION_CLOSE_TASKS = weakref.WeakSet()
 
 if TYPE_CHECKING:
     pass
@@ -361,13 +365,16 @@ def reset_session_manager(name: str = "default") -> bool:
     with _session_managers_lock:
         mgr = _session_managers.pop(name, None)
         if mgr is not None:
-            import asyncio
-
             try:
                 loop = asyncio.get_running_loop()
-                loop.run_until_complete(mgr.close_all())
+                _task = loop.create_task(mgr.close_all())
+                _SESSION_CLOSE_TASKS.add(_task)
+                _task.add_done_callback(_SESSION_CLOSE_TASKS.discard)
             except RuntimeError:  # noqa: BLE001
-                pass  # No running loop
+                try:
+                    asyncio.run_coroutine_threadsafe(mgr.close_all(), _get_bg_loop())
+                except Exception:  # noqa: BLE001
+                    pass
             return True
         return False
 
@@ -385,9 +392,14 @@ def reset_all_session_managers() -> int:
             if mgr is not None:
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.run_until_complete(mgr.close_all())
+                    _task = loop.create_task(mgr.close_all())
+                    _SESSION_CLOSE_TASKS.add(_task)
+                    _task.add_done_callback(_SESSION_CLOSE_TASKS.discard)
                 except RuntimeError:  # noqa: BLE001
-                    pass
+                    try:
+                        asyncio.run_coroutine_threadsafe(mgr.close_all(), _get_bg_loop())
+                    except Exception:  # noqa: BLE001
+                        pass
         return count
 
 

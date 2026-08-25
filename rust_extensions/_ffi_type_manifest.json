@@ -1,283 +1,10 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-21T03:33:15.988584+00:00",
+  "generated_at": "2026-08-24T13:50:43.377707+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
-  "__source_hash__": "3fadd396e2c01fef7ff5570ce7e403240b6f99b93b8967b1a52a5083ce26d6c9",
+  "__source_hash__": "e854bfa508911d57316fe2e6b8499311af50a9391c4c162782743a67ec942cc4",
   "classes": {
-    "warc_parser.WarcCertificate": {
-      "module": "warc_parser",
-      "name": "WarcCertificate",
-      "fields": [
-        {
-          "name": "sha256_fingerprint",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "subject_cn",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "issuer_cn",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "serial_number",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "not_before",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "not_after",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "san_names",
-          "rust_type": "Vec<String>",
-          "python_type": "list[str]",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "pem_preview",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "record_offset",
-          "rust_type": "u64",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        }
-      ],
-      "methods": [],
-      "slots": [
-        "sha256_fingerprint",
-        "subject_cn",
-        "issuer_cn",
-        "serial_number",
-        "not_before",
-        "not_after",
-        "san_names",
-        "pem_preview",
-        "record_offset"
-      ],
-      "doc_comment": null
-    },
-    "warc_parser.WarcExtractedData": {
-      "module": "warc_parser",
-      "name": "WarcExtractedData",
-      "fields": [
-        {
-          "name": "record_id",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "record_type",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "warc_date",
-          "rust_type": "String",
-          "python_type": "str",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "target_url",
-          "rust_type": "Option<String>",
-          "python_type": "str | None",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "content_type",
-          "rust_type": "Option<String>",
-          "python_type": "str | None",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "certificates",
-          "rust_type": "Vec<WarcCertificate>",
-          "python_type": "list[WarcCertificate]",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "ip_address",
-          "rust_type": "Option<String>",
-          "python_type": "str | None",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "record_offset",
-          "rust_type": "u64",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "record_size",
-          "rust_type": "usize",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        }
-      ],
-      "methods": [],
-      "slots": [
-        "record_id",
-        "record_type",
-        "warc_date",
-        "target_url",
-        "content_type",
-        "certificates",
-        "ip_address",
-        "record_offset",
-        "record_size"
-      ],
-      "doc_comment": null
-    },
-    "warc_parser.WarcExtractionStats": {
-      "module": "warc_parser",
-      "name": "WarcExtractionStats",
-      "fields": [
-        {
-          "name": "total_records",
-          "rust_type": "usize",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "response_records",
-          "rust_type": "usize",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "records_with_certs",
-          "rust_type": "usize",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "total_certificates",
-          "rust_type": "usize",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "unique_domains",
-          "rust_type": "usize",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "file_size_bytes",
-          "rust_type": "u64",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        },
-        {
-          "name": "extraction_time_ms",
-          "rust_type": "u64",
-          "python_type": "int",
-          "has_get": true,
-          "has_set": false
-        }
-      ],
-      "methods": [],
-      "slots": [
-        "total_records",
-        "response_records",
-        "records_with_certs",
-        "total_certificates",
-        "unique_domains",
-        "file_size_bytes",
-        "extraction_time_ms"
-      ],
-      "doc_comment": null
-    },
-    "warc_parser.WarcExtractor": {
-      "module": "warc_parser",
-      "name": "WarcExtractor",
-      "fields": [
-        {
-          "name": "stats",
-          "rust_type": "Option<WarcExtractionStats>",
-          "python_type": "WarcExtractionStats | None",
-          "has_get": true,
-          "has_set": false
-        }
-      ],
-      "methods": [
-        {
-          "name": "new",
-          "signature": "()",
-          "return_type": "Self",
-          "is_async": false
-        },
-        {
-          "name": "extract",
-          "signature": "(warc_path: str, record_types: list[str] | None, max_records: int | None)",
-          "return_type": "list[WarcExtractedData]",
-          "is_async": false
-        },
-        {
-          "name": "scan_certs",
-          "signature": "(warc_path: str, min_certs: int | None)",
-          "return_type": "list[WarcCertificate]",
-          "is_async": false
-        },
-        {
-          "name": "quick_scan",
-          "signature": "(warc_path: str)",
-          "return_type": "WarcExtractionStats",
-          "is_async": false
-        }
-      ],
-      "slots": [
-        "stats"
-      ],
-      "doc_comment": null
-    },
     "aho_corasick_simd.SIMDMatch": {
       "module": "aho_corasick_simd",
       "name": "SIMDMatch",
@@ -722,51 +449,6 @@
       "slots": [
         "last_result"
       ],
-      "doc_comment": null
-    },
-    "regex_lz4.PyRegexLz4Store": {
-      "module": "regex_lz4",
-      "name": "PyRegexLz4Store",
-      "fields": [],
-      "methods": [
-        {
-          "name": "new",
-          "signature": "(patterns: list[str])",
-          "return_type": "Self",
-          "is_async": false
-        },
-        {
-          "name": "compressed_size",
-          "signature": "()",
-          "return_type": "int",
-          "is_async": false
-        },
-        {
-          "name": "compression_ratio",
-          "signature": "()",
-          "return_type": "float",
-          "is_async": false
-        },
-        {
-          "name": "get_patterns",
-          "signature": "()",
-          "return_type": "list[str]",
-          "is_async": false
-        },
-        {
-          "name": "save",
-          "signature": "(path: str)",
-          "return_type": "tuple[]",
-          "is_async": false
-        },
-        {
-          "name": "load",
-          "signature": "(path: str)",
-          "return_type": "Self",
-          "is_async": false
-        }
-      ],
-      "slots": [],
       "doc_comment": null
     },
     "ioc_stream_scan.StreamingIocScanner": {
@@ -3452,19 +3134,27 @@
       "is_async": false,
       "doc_comment": null
     },
-    "sendfile.sendfile_available": {
-      "module": "sendfile",
-      "name": "sendfile_available",
-      "signature": "()",
-      "return_type": "bool",
-      "is_async": false,
-      "doc_comment": null
-    },
     "telemetry_agg.create_telemetry_aggregator": {
       "module": "telemetry_agg",
       "name": "create_telemetry_aggregator",
       "signature": "()",
       "return_type": "PyTelemetryAggregator",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "telemetry_agg.create_counter": {
+      "module": "telemetry_agg",
+      "name": "create_counter",
+      "signature": "(name: str)",
+      "return_type": "PyCounter",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "telemetry_agg.create_histogram": {
+      "module": "telemetry_agg",
+      "name": "create_histogram",
+      "signature": "(name: str)",
+      "return_type": "PyHistogram",
       "is_async": false,
       "doc_comment": null
     },
@@ -5647,7 +5337,7 @@
     "async_bridge.resolve_async_py": {
       "module": "async_bridge",
       "name": "resolve_async_py",
-      "signature": "(//     hostname: str, //     qtype: str | None, //)",
+      "signature": "(hostname: str, qtype: str | None)",
       "return_type": "Any",
       "is_async": false,
       "doc_comment": null

@@ -53,7 +53,7 @@ import asyncio
 import gc
 import logging
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from _core.lock_registry import LockCategory, auto_register
@@ -195,6 +195,20 @@ class MLXInferenceLock:
                     self._threading_lock = threading.Lock()
         return self._threading_lock
 
+    def __enter__(self) -> "MLXInferenceLock":
+        """Synchronous CM entry — acquires the legacy threading lock.
+
+        Enables the documented ``with MLXInferenceLock():`` usage for blocking
+        (non-async) MLX calls. The async path should use ``async with acquire()``.
+        """
+        self._get_threading_lock().acquire()
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        """Synchronous CM exit — releases the legacy threading lock."""
+        self._get_threading_lock().release()
+
+    @contextmanager
     def _threading_lock_context(self) -> Iterator[None]:
         """
         INTERNAL: Get the threading lock context manager (DCLP singleton).

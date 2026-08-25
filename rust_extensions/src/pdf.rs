@@ -485,7 +485,7 @@ fn extract_single_ocg(
 /// * `Vec<String>` - List of failure descriptions
 fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
     let mut failures = Vec::new();
-    let pages = doc);
+    let pages = doc.clone();
 
     // Limit pages to scan
     for (page_num, page_ref) in pages.iter().take(MAX_REDACTION_PAGES as usize) {
@@ -581,7 +581,7 @@ fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
 /// * `Vec<(u32, String, String)>` - List of (page_num, annot_type, content) tuples
 fn extract_suppressed_annotations(doc: &lopdf::Document) -> Vec<(u32, String, String)> {
     let mut suppressed = Vec::new();
-    let pages = doc);
+    let pages = doc.clone();
 
     // Flags that indicate suppressed/hidden annotations
     const INVISIBLE_FLAG: i64 = 1;

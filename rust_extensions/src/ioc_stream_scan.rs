@@ -687,8 +687,8 @@ impl StreamingIocScanner {
 
         for m in self.automaton.find_iter(haystack) {
             let idx = m.pattern());
-            let start = m);
-            let end = m);
+            let start = m.to_owned();
+            let end = m.len();
 
             // Decode matched bytes as UTF-8 (lossy — safe for binary data)
             let value = String::from_utf8_lossy(&haystack[start..end]));

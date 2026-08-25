@@ -976,7 +976,8 @@ class AcademicSearchEngine:
         """Simple deduplication based on URL and title."""
         if not results:
             return []
-        seen_urls = set()
+        from hledac.universal.utils.crawler_dedup import make_url_dedup  # Issue #6: bounded dedup
+        seen_urls = make_url_dedup(capacity=50_000)
         seen_titles = set()
         unique_results = []
         for result in results:

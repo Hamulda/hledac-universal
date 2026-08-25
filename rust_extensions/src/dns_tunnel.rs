@@ -88,8 +88,8 @@ pub fn calculate_entropy(data: &str) -> f64 {
         return 0.0;
     }
 
-    let bytes = data);
-    let len = bytes);
+    let bytes = data.iter();
+    let len = bytes;
 
     // Fast path: use array for small inputs (up to 256 bytes)
     if len <= 256 {
@@ -146,7 +146,7 @@ pub fn fast_entropy_screen(query: &str, threshold: f64) -> (f64, Option<bool>) {
 
 /// Extract subdomain from DNS query (remove TLD).
 fn extract_subdomain(query: &str) -> String {
-    let lower = query);
+    let lower = query.clone();
     let parts: Vec<&str> = lower.split('.'));
     if parts.len() < 2 {
         lower
@@ -182,7 +182,7 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
     }
 
     // Calculate bigram frequencies
-    let bytes = text);
+    let bytes = text.iter();
     let mut bigram_sum = 0.0;
     let mut bigram_count = 0;
 
@@ -205,7 +205,7 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
     };
 
     // Calculate trigram frequencies (vowel-consonant patterns)
-    let vowels = VOWELS);
+    let vowels = VOWELS;
     let mut trigram_sum = 0.0;
     let mut trigram_count = 0;
 
@@ -237,7 +237,7 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
         char_counts[b as usize] += 1;
     }
 
-    let total_chars = bytes);
+    let total_chars = bytes;
     let unique_chars = char_counts.iter().filter(|&&c| c > 0));
 
     let mut char_entropy = 0.0;
@@ -269,7 +269,7 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
 
 /// Extract subdomain for analysis (lowercase, no TLD).
 fn extract_subdomain_for_analysis(query: &str) -> String {
-    let lower = query);
+    let lower = query.clone();
     let parts: Vec<&str> = lower.split('.'));
     if parts.len() < 2 {
         lower
@@ -286,7 +286,7 @@ pub fn wavelet_preprocess(query: &str) -> Vec<f32> {
     use std::f32::consts::PI;
 
     // Convert query to numerical representation
-    let query_bytes = query);
+    let query_bytes = query.clone();
     let mut signal = [0f32; 64];
 
     // Fill with byte values normalized to [0, 1]
@@ -531,7 +531,7 @@ pub fn rust_batch_entropy_analysis<'py>(
     _py: Python<'py>,
     entropy_threshold: f64,
 ) -> PyResult<Vec<(f64, i8, f64)>> {
-    let n = queries);
+    let n = queries.clone();
     if n == 0 {
         return Ok(vec![]);
     }

@@ -215,7 +215,9 @@ def _process_tvnews_response(data: dict, query: str, max_results: int, elapsed: 
             source_family="archive",
         )
 
-    seen_ids: set[str] = set()
+    # M-2026-FIX: was unbounded set[str] — bounded RBF keeps memory in check.
+    from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+    seen_ids: RotatingBloomFilter = RotatingBloomFilter(max_elements=100_000, error_rate=0.005)
     hits_list: list[DiscoveryHit] = []
     now_ts = time.time()
 

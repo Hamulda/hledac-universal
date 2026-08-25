@@ -41,8 +41,6 @@ from typing import TYPE_CHECKING, Any, Final
 
 from datasketch import MinHash, MinHashLSH
 
-if TYPE_CHECKING:
-
 __all__ = [
     "SemanticDeduplicator",
     "get_semantic_deduplicator",

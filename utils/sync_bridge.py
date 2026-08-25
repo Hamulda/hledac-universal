@@ -101,7 +101,7 @@ async def to_thread[T](func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
 
     Note:
         For CPU-bound work on Python 3.14+, consider InterpreterPoolExecutor
-        from concurrent.futures (PEP 756) — see py314_executors.py
+        from concurrent.futures (PEP 734) — see py314_executors.py
     """
     pool = _get_dedicated_thread_pool()
     loop = asyncio.get_running_loop()
@@ -296,7 +296,7 @@ async def to_thread_rayon[T](
     Note:
         Pool type "cpu" uses 4 P-cores; "io" uses 2 threads.
         For Python-native parallelism (no GIL release), use InterpreterPoolExecutor
-        instead (py314_executors.py, PEP 756).
+        instead (py314_executors.py, PEP 734).
     """
     try:
         # R6: Centralized Rust access via core.rust_backend

@@ -25,7 +25,10 @@ import time
 from dataclasses import dataclass, field
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from hledac.universal.utils.concurrency import AtomicAdaptiveSemaphore
+from hledac.universal.utils.concurrency import AtomicAdaptiveSemaphore, _get_bg_loop
+
+# Retain references to fire-and-forget tasks so they aren't GC'd before completion.
+_AIMD_PENDING: set = set()
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +179,27 @@ class AIMDWindowService:
             "avg_rtt_ms": avg_rtt,
         }
 
+    def get_semaphore(self) -> asyncio.Semaphore | None:
+        """
+        Return the AIMD semaphore for concurrency control.
+
+        Returns None if semaphore not yet initialized (lazy init).
+        """
+        return self._semaphore
+
+    def get_backpressure(self) -> float | None:
+        """
+        Return current backpressure ratio (0.0-1.0).
+
+        Calculated as (max_window - current_window) / max_window.
+        Returns None if semaphore not yet initialized.
+        """
+        if self._semaphore is None:
+            return None
+        current = self._window
+        max_w = self.config.max_window
+        return max(0.0, min(1.0, (max_w - current) / max_w))
+
     def reset(self) -> None:
         """Reset AIMD window to initial state."""
         self._window = self.config.initial_window
@@ -241,10 +265,21 @@ class PyAIMDController:
 
     def release(self) -> None:
         """Release a slot."""
-        if self._available:
-            self._controller.release()
-        else:
-            self._controller.release()
+        result = self._controller.release()
+        if result is not None and hasattr(result, "__await__"):
+            # Python AIMDWindowService.release() is async; Rust PyAIMDController.release()
+            # is sync. Schedule the async release without blocking this thread.
+            try:
+                loop = asyncio.get_running_loop()
+                _task = loop.create_task(result)
+                _AIMD_PENDING.add(_task)
+                _task.add_done_callback(_AIMD_PENDING.discard)
+            except RuntimeError:
+                # No running loop on this thread (e.g. Rust PyAIMD callback / worker
+                # thread). Hand the coroutine to a persistent daemon loop instead of
+                # asyncio.run() — spinning a fresh loop here is the M1 crash vector
+                # forbidden by AGENTS.md invariant #4.
+                asyncio.run_coroutine_threadsafe(result, _get_bg_loop())
 
     async def record_success(self, rtt_ms: float | None = None) -> None:
         """Record successful request."""

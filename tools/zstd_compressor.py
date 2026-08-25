@@ -27,6 +27,9 @@ if ZSTD_AVAILABLE:
 else:
     _DictT = Any
 
+# Hard cap on decompressed output to mitigate zip-bomb DoS on M1 8GB.
+_ZSTD_MAX_OUTPUT = 256 * 1024 * 1024  # 256 MiB
+
 # HEIST-07: Lazy import of Rust dictionary functions.
 _rust_compress_dict: Any = None
 _rust_register_dict: Any = None
@@ -140,10 +143,14 @@ class ZstdCompressor:
         try:
             if self._dictionary_data:
                 dctx = zstd.ZstdDecompressor(dict_data=self._dictionary_data)
-                return dctx.decompress(data)
+                return dctx.decompress(data, max_output_size=_ZSTD_MAX_OUTPUT)
             if self._dctx is None:
                 return data
-            return self._dctx.decompress(data)
+            return self._dctx.decompress(data, max_output_size=_ZSTD_MAX_OUTPUT)
+        except zstd.ZstdError:
+            # Genuine decompression failure (corrupt/truncated frame or
+            # dict mismatch) — propagate instead of returning ciphertext.
+            raise
         except Exception:
             return data
 

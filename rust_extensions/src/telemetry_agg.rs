@@ -789,7 +789,7 @@ pub fn telemetry_snapshot() -> Vec<(String, i64)> {
     static AGG: LazyLock<TelemetryAggregator, fn() -> TelemetryAggregator> =
         LazyLock::new(TelemetryAggregator::new);
 
-    let snap = AGG);
+    let snap = AGG;
     snap.counters
         .iter()
         .map(|(name, (count, _))| (name.clone(), *count as i64))
@@ -817,7 +817,7 @@ mod tests {
         histogram.record(Duration::from_micros(100));
         histogram.record(Duration::from_millis(10));
         histogram.record(Duration::from_millis(100));
-        let stats = histogram);
+        let stats = histogram.clone();
         assert_eq!(stats.count, 3);
         assert!(stats.p50_ns > 0);
     }
@@ -838,7 +838,7 @@ mod tests {
         agg.histogram_record("test_latency", Duration::from_millis(50));
         agg.gauge_set("test_memory", 1.5);
         std::thread::sleep(Duration::from_millis(10));
-        let snap = agg);
+        let snap = agg.clone();
         assert!(snap.counters.contains_key("test_counter"));
         assert!(snap.histograms.contains_key("test_latency"));
         assert!(snap.gauges.contains_key("test_memory"));

@@ -93,7 +93,10 @@ def _add_pattern_hits_to_graph(
 
     [META]-012: observed_at captures the HTTP fetch timestamp for temporal provenance.
     """
-    if not hits or graph is None:
+    # ISSUE #4: Route through graph_service.upsert_ioc dispatcher (not direct graph.upsert_ioc)
+    from hledac.universal.knowledge.graph_service import upsert_ioc as _graph_upsert_ioc
+
+    if not hits:
         return
     try:
         for hit in hits:
@@ -102,11 +105,11 @@ def _add_pattern_hits_to_graph(
             value = getattr(hit, "value", None) or ""
             if label and pattern:
                 try:
-                    graph.upsert_ioc(
-                        ioc_type=label,
+                    _graph_upsert_ioc(
                         value=value,
+                        ioc_type=label,
+                        confidence=0.5,
                         source="public_pipeline",
-                        properties={"pattern": pattern},
                         observed_at=observed_at,
                     )
                 except Exception:  # noqa: BLE001
@@ -828,8 +831,14 @@ async def _store_in_memory_manager(
     query: str,
     hit_url: str,
 ) -> None:
-    """Store findings in memory manager for RAG context."""
-    for finding in unique_findings:
+    """Store findings in memory manager for RAG context.
+
+    M-2026-FIX: parallel writes via asyncio.gather — all findings stored concurrently.
+    """
+    if not unique_findings:
+        return
+
+    async def _store_one(finding: Any) -> None:
         try:
             finding_id = getattr(finding, "finding_id", None) or str(hash(hit_url))
             memory_entry = {
@@ -844,7 +853,9 @@ async def _store_in_memory_manager(
             }
             await memory_manager.put(session_id, f"finding:{finding_id}", memory_entry)
         except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001
+            pass
+
+    await asyncio.gather(*[_store_one(f) for f in unique_findings], return_exceptions=True)
 
 
 async def _store_and_embed(
@@ -1043,6 +1054,8 @@ async def _handle_no_pattern_match(
     fetched_redirected: bool,
     fetched_redirect_target: str | None,
     fetched_js_skip_reason: str | None,
+    extra_findings: list | None = None,
+    dual_ioc_count: int = 0,
 ) -> Any:
     """Handle the no-pattern-match branch.
 
@@ -1073,6 +1086,8 @@ async def _handle_no_pattern_match(
         ctx.discovery_reason,
         result,
     )
+    if extra_findings:
+        public_findings = list(public_findings) + list(extra_findings)
 
     pub_accepted, pub_stored = _count_public_findings_results(public_findings, ctx.store)
 
@@ -1089,6 +1104,7 @@ async def _handle_no_pattern_match(
             fetched_redirected=fetched_redirected,
             fetched_redirect_target=fetched_redirect_target,
             fetched_js_skip_reason=fetched_js_skip_reason,
+            dual_ioc_count=dual_ioc_count,
         )
 
     # Final return: terminal state
@@ -1115,6 +1131,7 @@ async def _handle_no_pattern_match(
         js_renderer_skipped_reason=fetched_js_skip_reason,
         rejection_reason=terminal_state.rejection_reason,
         terminal_reason=terminal_state.terminal_reason,
+        dual_engine_iocs=dual_ioc_count,
     )
 
 
@@ -1129,6 +1146,7 @@ def _build_public_surface_ppr(
     fetched_redirected: bool,
     fetched_redirect_target: str | None,
     fetched_js_skip_reason: str | None,
+    dual_ioc_count: int = 0,
 ) -> PipelinePageResult:
     """Build PPR for public surface findings case."""
     is_dup = bool(public_findings and pub_stored > 0 and pub_accepted == 0)
@@ -1169,6 +1187,7 @@ def _build_public_surface_ppr(
         rejection_reason=None,
         terminal_reason=None,
         public_surface_dup=is_dup,
+        dual_engine_iocs=dual_ioc_count,
     )
 
 
@@ -1412,6 +1431,77 @@ def _make_skip_weak_ppr(
     )
 
 
+async def _extract_dual_engine_findings(
+    *,
+    query: str,
+    hit_url: str,
+    extracted_text: str,
+    discovery_score: float | None,
+) -> tuple[list, int]:
+    """Dual-engine IOC extraction (Rust regex + Brain NER) on the live page path.
+
+    Runs the unified dual engine on a single page's extracted text and converts
+    each canonical IOC into a ``CanonicalFinding`` for the canonical store path.
+    The NER leg is self-gated by ``brain.ner_engine._is_ner_available()`` inside
+    ``extract_iocs_from_texts_dual`` (AGENTS.md: "live_public_pipeline.py volá obě —
+    to je správně").
+
+    Fail-safe: returns ``([], 0)`` on empty input or any error.
+    """
+    if not extracted_text or len(extracted_text) < 8:
+        return [], 0
+    try:
+        from hledac.universal.knowledge.sprint_facts import CanonicalFinding
+        from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts_dual
+        from .public_patterns import _make_finding_id
+    except Exception:
+        return [], 0
+
+    try:
+        pages = await extract_iocs_from_texts_dual([extracted_text], use_ner=True)
+        iocs = pages[0] if pages else []
+    except Exception:
+        return [], 0
+
+    if not iocs:
+        return [], 0
+
+    findings: list = []
+    ts_now = time.time()
+    for ioc in iocs:
+        try:
+            finding_id = _make_finding_id(
+                query=query,
+                url=hit_url,
+                label="ioc",
+                pattern=ioc.ioc_type,
+                value=ioc.value,
+            )
+            payload = ioc.raw_context or f"{ioc.ioc_type}: {ioc.value}"
+            provenance = (
+                "source_family:public",
+                "dual_engine",
+                ioc.source,  # rust_regex | brain_ner
+                hit_url,
+                ioc.ioc_type,
+            )
+            findings.append(
+                CanonicalFinding(
+                    finding_id=finding_id,
+                    query=query,
+                    source_type="dual_engine_ioc",
+                    confidence=ioc.confidence or 0.6,
+                    ts=ts_now,
+                    provenance=provenance,
+                    payload_text=payload,
+                )
+            )
+        except Exception:
+            continue
+
+    return findings, len(findings)
+
+
 async def _fetch_and_process_page(
     *,
     semaphore: asyncio.Semaphore,
@@ -1534,6 +1624,15 @@ async def _fetch_and_process_page(
         current_text=extracted_text,
     )
 
+    # === Dual-engine IOC extraction (Rust regex + Brain NER) — live-path wire-in ===
+    # ISSUE #9 / 2026: NER was previously never invoked from the live path.
+    dual_ioc_findings, dual_ioc_count = await _extract_dual_engine_findings(
+        query=query,
+        hit_url=hit_url,
+        extracted_text=extracted_text,
+        discovery_score=discovery_score,
+    )
+
     scan_result = _execute_pattern_scan_stage(
         hit_title=ctx.hit_title,
         hit_snippet=ctx.hit_snippet,
@@ -1556,10 +1655,15 @@ async def _fetch_and_process_page(
             fetched_redirected=fetch_result.redirected,
             fetched_redirect_target=fetch_result.redirect_target,
             fetched_js_skip_reason=fetch_result.js_skip_reason,
+            extra_findings=dual_ioc_findings,
+            dual_ioc_count=dual_ioc_count,
         )
 
     deduped_hits = _deduplicate_hits(scan_result.hits)
     unique_findings = await _extract_findings_parallel(deduped_hits, query, hit_url, extracted_text, discovery_score)
+    # Supplement pattern findings with dual-engine IOCs (Rust regex + Brain NER).
+    if dual_ioc_findings:
+        unique_findings = unique_findings + dual_ioc_findings
 
     storage_result = await _execute_storage_stage(
         unique_findings=unique_findings,
@@ -1603,6 +1707,7 @@ async def _fetch_and_process_page(
         matched_patterns=scan_result.matched_count,
         accepted_findings=storage_result.accepted_count,
         stored_findings=storage_result.stored_count,
+        dual_engine_iocs=dual_ioc_count,
         quality_reason=quality_reason,
         discovery_score=discovery_score,
         discovery_reason=discovery_reason,

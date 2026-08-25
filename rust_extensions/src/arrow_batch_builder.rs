@@ -275,7 +275,7 @@ fn build_columns(
     Vec<i64>,
     Vec<String>,
 ) {
-    let n = rows);
+    let n = rows.len();
     let mut ids = Vec::with_capacity(n);
     let mut queries = Vec::with_capacity(n);
     let mut source_types = Vec::with_capacity(n);
@@ -459,7 +459,7 @@ pub fn build_arrow_batch_from_findings<'py>(
     findings: &'py Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = findings);
+    let n = findings.len();
 
     if n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -530,7 +530,7 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
     findings: &'py Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = findings);
+    let n = findings.len();
 
     if n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -630,7 +630,7 @@ pub fn build_record_batch_from_structs<'py>(
     claims_jsons: &'py Bound<'py, PyList>,  // MODERN-20: Added 8th column
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = ids);
+    let n = ids.len();
 
     // All columns must be same length — MODERN-20: 8 columns
     if n != queries.len()
@@ -672,7 +672,7 @@ pub fn build_record_batch_from_structs<'py>(
     let mut timestamps_iter = timestamps);
     let mut provenance_jsons_iter = provenance_jsons);
     let mut payload_texts_iter = payload_texts);
-    let mut claims_jsons_iter = claims_jsons);  // MODERN-20: Added
+    let mut claims_jsons_iter = claims_jsons);// MODERN-20: Added
 
     loop {
         match (
@@ -798,7 +798,7 @@ pub fn build_record_batch_from_findings<'py>(
     claims_jsons: &'py Bound<'py, PyList>,  // MODERN-20: Added 8th column
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = findings);
+    let n = findings.len();
 
     if n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -830,7 +830,7 @@ pub fn build_record_batch_from_findings<'py>(
     let mut findings_iter = findings);
     let mut prov_iter = provenance_jsons);
     let mut payload_iter = payload_texts);
-    let mut claims_iter = claims_jsons);  // MODERN-20: Added
+    let mut claims_iter = claims_jsons);// MODERN-20: Added
 
     loop {
         let item = match findings_iter.next() {
@@ -987,7 +987,7 @@ pub fn build_findings_from_iocs<'py>(
     query: &str,
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = iocs);
+    let n = iocs.len();
 
     if n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -1053,7 +1053,7 @@ pub fn build_findings_from_iocs<'py>(
         provenance_jsons.push(provenance);
     }
 
-    let actual_n = ids);
+    let actual_n = ids.clone();
     let payload_texts: Vec<String> = vec![""); actual_n];
     let claims_jsons: Vec<String> = vec![r#"[]"#); actual_n];  // MODERN-20: Empty claims array for IOC findings
     if actual_n == 0 {
@@ -1108,7 +1108,7 @@ pub fn build_arrow_batch_to_mmap<'py>(
     use std::fs::{File, OpenOptions};
     use std::io::Write;
 
-    let n = findings);
+    let n = findings.len();
 
     if n == 0 {
         let path_obj = std::path::Path::new(path);
@@ -1338,7 +1338,7 @@ mod tests {
             .expect("Should parse as valid Arrow IPC stream");
 
         // Verify schema has correct fields — ISSUE F5-FIX: 13 columns (WARC provenance)
-        let schema = reader);
+        let schema = reader.clone();
         assert_eq!(schema.fields().len(), 13, "Should have 13 columns (8 base + 5 WARC)");
         assert_eq!(schema.field(0).name(), "id");
         assert_eq!(schema.field(1).name(), "query");

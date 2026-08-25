@@ -18,6 +18,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
 
 # Import msgspec.Struct for memory-efficient data structures (M1 8GB)
 from compat.msgspec_gc_compat import Struct
@@ -748,29 +749,47 @@ class Phase6_ReportGenerator:
 
         generated_report = ""
         tot_solution_count = 0
+
+        # H6: report / RL / ToT are independent (read-only ctx, shared loaded
+        # hermes_engine) → run concurrently. parallel() gathers with
+        # return_exceptions=True and isolates per-task failures via
+        # policy="collect" + names, mirroring the original try/except blocks.
+        coros: list = []
+        names: list = []
         if ctx.hermes_engine is not None and all_page_results:
-            try:
-                generated_report = await _generate_and_store_report(
+            coros.append(
+                _generate_and_store_report(
                     query=ctx.query,
                     pages=tuple(all_page_results),
                     store=ctx.store,
                     hermes_engine=ctx.hermes_engine,
                     vector_store=ctx.vector_store,
                 )
-            except Exception:
-                generated_report = ""
+            )
+            names.append("report")
         if ctx.run_loop and ctx.hermes_engine is not None:
-            try:
-                rl_result = await _run_rl_loop(ctx=ctx, all_page_results=all_page_results)
-                tot_solution_count = rl_result.get("tot_solution_count", 0)
-            except Exception:
-                pass
+            coros.append(_run_rl_loop(ctx=ctx, all_page_results=all_page_results))
+            names.append("rl")
         if ctx.store is not None and ctx.hermes_engine is not None:
-            try:
-                tot_result = await _run_hypothesis_tot(ctx=ctx, all_page_results=all_page_results)
-                tot_solution_count = tot_result.get("tot_solution_count", 0)
-            except Exception:
-                pass
+            coros.append(_run_hypothesis_tot(ctx=ctx, all_page_results=all_page_results))
+            names.append("tot")
+
+        if coros:
+            result = await parallel(
+            coros, policy="collect", names=names,
+            concurrency=_m1_concurrency_budget(ceil=3, floor=1), ctx="phase6",
+            )
+            by_name = result.by_name
+
+            report_val = by_name.get("report")
+            if not isinstance(report_val, Exception):
+                generated_report = report_val or ""
+
+            rl_val = by_name.get("rl")
+            tot_val = by_name.get("tot")
+            rl_count = rl_val.get("tot_solution_count", 0) if isinstance(rl_val, dict) else 0
+            tot_count = tot_val.get("tot_solution_count", 0) if isinstance(tot_val, dict) else 0
+            tot_solution_count = max(rl_count, tot_count)
         return (
             PipelineContext(
                 **{
@@ -792,9 +811,10 @@ class Phase7_SynthesisRunner:
         if total_stored < 5 or not LANE_REGISTRY.is_enabled("hermes_synthesis"):
             return
         try:
-            import psutil
+            from hledac.universal._core.psutil_shim import process
 
-            rss_gib = psutil.Process().memory_info().rss / 1024**3
+            rss_bytes = await asyncio.to_thread(lambda: process().memory_info().rss)
+            rss_gib = rss_bytes / 1024**3
             if rss_gib > 5.5:
                 logger.debug("[SYNTHESIS] Skipped: RSS %.1fGiB > 5.5GiB", rss_gib)
                 return
@@ -807,19 +827,28 @@ class Phase8_ExportManager:
 
     async def run(self, ctx: PipelineContext, generated_report: str, all_page_results: list) -> None:
         """Execute export to markdown and graph HTML."""
+        # H6: graph HTML + markdown export are independent blocking file writes.
+        # Offload each sync export to a worker thread (to_thread) and run them
+        # concurrently; parallel() isolates per-task failures.
+        coros: list = []
+
+        graph_present = False
         try:
-            if ctx.graph is not None and hasattr(ctx.graph, "node_count") and ctx.graph.node_count() > 0:
-                try:
-                    export_path = os.path.expanduser("~/new_hledac_graph.html")
-                    ctx.graph.export_html(export_path)
-                except Exception:
-                    pass
+            graph_present = (
+                ctx.graph is not None
+                and hasattr(ctx.graph, "node_count")
+                and ctx.graph.node_count() > 0
+            )
         except Exception:
-            pass
+            graph_present = False
+        if graph_present:
+            export_path = os.path.expanduser("~/new_hledac_graph.html")
+            coros.append(asyncio.to_thread(ctx.graph.export_html, export_path))
+
         try:
             from hledac.universal.export.export_manager import get_export_manager
 
-            resolved_export_dir = ctx.export_dir or os.environ.get("GHOST_EXPORT_DIR")
+            resolved_export_dir = ctx.export_dir or os.environ.get("HLEDAC_EXPORT_DIR", os.environ.get("GHOST_EXPORT_DIR"))
             export_mgr = get_export_manager(resolved_export_dir)
             sources = [getattr(p, "url", "") for p in all_page_results if hasattr(p, "url") and p.url][:20]
             export_metadata = {
@@ -828,13 +857,28 @@ class Phase8_ExportManager:
                 "tags": ["hledac", "osint", "public-pipeline"],
                 "session_id": ctx.session_id,
             }
-            md_path = export_mgr.export_markdown(
-                report=generated_report, findings=[], file_path=None, metadata=export_metadata
+            coros.append(
+                asyncio.to_thread(
+                    export_mgr.export_markdown,
+                    report=generated_report,
+                    findings=[],
+                    file_path=None,
+                    metadata=export_metadata,
+                )
             )
-            if md_path:
-                logger.info(f"[P18] Exported markdown to {md_path}")
         except Exception as e:
-            logger.warning(f"[P18] Export failed: {e}")
+            logger.warning(f"[P18] Export manager unavailable: {e}")
+
+        if coros:
+            results = await parallel(
+                coros, policy="collect",
+                concurrency=_m1_concurrency_budget(ceil=2, floor=1), ctx="phase8",
+            )
+            for exc in results.errors:
+                logger.warning(f"[P18] Export failed: {exc}")
+            for r in results.ok:
+                if isinstance(r, str) and r:
+                    logger.info(f"[P18] Exported markdown to {r}")
 
 
 class Phase9_TemporalPersistence:
@@ -866,6 +910,40 @@ class Phase9_TemporalPersistence:
 async def safe_wait_for(coro, timeout, label):
     """Safe asyncio.wait_for wrapper."""
     return await asyncio.wait_for(coro, timeout=timeout)
+
+
+def _m1_concurrency_budget(ceil: int, floor: int = 1) -> Callable[[], Awaitable[int]]:
+    """M1 8GB-aware concurrency cap for fan-out tasks.
+
+    Returns a zero-arg resolver consumed by ``parallel(concurrency=...)``.
+    It scales fan-out DOWN as free RAM shrinks so several LLM/IO tasks don't
+    OOM the 8 GiB UMA MacBook Air: full ``ceil`` with headroom, ``floor``
+    (>=1) under pressure, linear in between. Fail-soft: any error → a
+    conservative cap of 2.
+
+    This is the hardware-specific best practice for the target machine: the
+    AGENTS.md RAM budget leaves only ~1.75 GiB headroom, so unbounded
+    ``asyncio.gather`` of three LLM/IO tasks can exhaust RAM and crash the
+    whole sprint (worse than running slower).
+    """
+
+    async def _resolve() -> int:
+        try:
+            from hledac.universal._core.psutil_shim import available_gb
+
+            avail_gib = await asyncio.to_thread(available_gb)
+        except Exception:  # noqa: BLE001 - fail-soft budgeting
+            return max(floor, min(ceil, 2))
+        if not isinstance(avail_gib, (int, float)) or avail_gib <= 0:
+            return max(floor, min(ceil, 2))
+        if avail_gib >= 1.5:
+            return ceil
+        if avail_gib <= 0.5:
+            return floor
+        frac = (avail_gib - 0.5) / 1.0
+        return max(floor, min(ceil, round(floor + (ceil - floor) * frac)))
+
+    return _resolve
 
 
 _ASYNC_DISCOVERY_SEARCH: Any = None
@@ -979,7 +1057,7 @@ class DiscoveryEngine:
             )
         augmented_result = await self._run_augmentation_phases(hits)
         hits = augmented_result["hits"]
-        onion_findings_count = await _run_onion_phase(hits, self.query, self.store)
+        onion_findings_count = augmented_result.get("onion_findings_count", 0)
         return DiscoveryPhaseResult(
             hits=hits,
             discovery_result=disc["result"],
@@ -999,8 +1077,43 @@ class DiscoveryEngine:
 
     async def _run_augmentation_phases(self, hits: tuple) -> dict:
         """Run all augmentation phases."""
-        academic_findings_count = await _run_academic_lane(self.store, self.query)
-        ct_augmented, cc_augmented, p20_counts = await _run_phase1_augmentation(hits, self.query, self.store)
+        # H6: _run_academic_lane (writes findings via store.submit_findings),
+        # _run_phase1_augmentation (CT/CC network enrichment, no store writes) and
+        # _run_onion_phase (independent Tor onion discovery on the same `hits`)
+        # are all independent → run concurrently. parallel() isolates failures and
+        # the M1 memory budget caps fan-out so we never OOM the 8 GiB Air.
+        result = await parallel(
+        [
+            _run_academic_lane(self.store, self.query),
+            _run_phase1_augmentation(hits, self.query, self.store),
+            _run_onion_phase(hits, self.query, self.store),
+        ],
+        policy="collect",
+        names=["academic", "augment", "onion"],
+        concurrency=_m1_concurrency_budget(ceil=3, floor=1),
+        ctx="augmentation",
+        )
+        by_name = result.by_name
+
+        academic_findings_count = 0
+        acad_val = by_name.get("academic")
+        if not isinstance(acad_val, Exception) and isinstance(acad_val, int):
+            academic_findings_count = acad_val
+
+        ct_augmented, cc_augmented, p20_counts = hits, hits, (0, 0)
+        aug_val = by_name.get("augment")
+        if not isinstance(aug_val, Exception) and isinstance(aug_val, tuple):
+            ct_augmented, cc_augmented, p20_counts = aug_val
+        elif isinstance(aug_val, Exception):
+            logger.debug("[AUG] phase1 augmentation failed: %s", aug_val)
+
+        onion_findings_count = 0
+        onion_val = by_name.get("onion")
+        if not isinstance(onion_val, Exception) and isinstance(onion_val, int):
+            onion_findings_count = onion_val
+        elif isinstance(onion_val, Exception):
+            logger.debug("[AUG] onion phase failed: %s", onion_val)
+
         ct_injected = len(ct_augmented) - len(hits)
         cc_injected = len(cc_augmented) - len(hits)
         pastebin_findings_count, github_secrets_count = p20_counts
@@ -1012,6 +1125,7 @@ class DiscoveryEngine:
             "cc_injected": cc_injected,
             "pastebin_findings_count": pastebin_findings_count,
             "github_secrets_count": github_secrets_count,
+            "onion_findings_count": onion_findings_count,
         }
 
     async def _run_bootstrap_phase(self) -> dict:
@@ -1678,19 +1792,4 @@ def _build_pipeline_run_result(
     )
 
 
-# Report helpers stubs
-async def _generate_and_store_report(
-    query: str, pages: tuple, store: Any, hermes_engine: Any, vector_store: Any = None
-) -> str:
-    """Generate OSINT report from top findings."""
-    return ""
 
-
-async def _run_rl_loop(ctx: PipelineContext, all_page_results: list) -> dict:
-    """Run reinforcement learning loop."""
-    return {"tot_solution_count": 0}
-
-
-async def _run_hypothesis_tot(ctx: PipelineContext, all_page_results: list) -> dict:
-    """Run hypothesis generation and ToT."""
-    return {"tot_solution_count": 0}

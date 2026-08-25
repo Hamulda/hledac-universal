@@ -402,19 +402,19 @@ class PipelineOrchestrator:
             for batch_idx, batch in enumerate(batch_group):
                 global_idx = batch_group_start + batch_idx
                 if op == "map":
-                    task = asyncio.create_task(
+                    task = safe_create_task(
                         self._process_batch_with_stats(batch, fn_name, stage_name, global_idx, "map")
                     )
                 elif op == "filter":
-                    task = asyncio.create_task(
+                    task = safe_create_task(
                         self._process_batch_with_stats(batch, fn_name, stage_name, global_idx, "filter")
                     )
                 elif op == "filter_map" and filter_fn is not None:
-                    task = asyncio.create_task(
+                    task = safe_create_task(
                         self._process_batch_with_stats_filter_map(batch, filter_fn, fn_name, stage_name, global_idx)
                     )
                 else:
-                    task = asyncio.create_task(
+                    task = safe_create_task(
                         self._process_batch_with_stats(batch, fn_name, stage_name, global_idx, "passthrough")
                     )
                 tasks.append(task)

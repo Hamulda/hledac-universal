@@ -21,7 +21,7 @@
 - **Nepoužívej `asyncio.run()` v ThreadPoolExecutor** — M1 crash, použij `loop.run_until_complete()`
 - **Neobcházej `mx.eval([])` před `clear_cache()`** — clear_cache je no-op bez barrier
 - **Nepoužívej `ScalableBloomFilter`** — roste bez limitu, nahrazeno `RotatingBloomFilter`
-- **Nepiš raw `try/except ImportError` na module level** — použij `utils.optional_imports.optional()` nebo `core.capabilities.CAP`
+- **Nepiš raw `try/except ImportError` na module level** — použij `utils.optional_imports.optional()` nebo `hledac.universal.capabilities.CAP` (alias `_core.capabilities.CAPS`)
 - **Nepoužívej `bytes()` na LMDB buffer** — ničí zero-copy přenos
 - **Nikdy nepřidávej `--disable-gpu` do nodriver args** — na M1 je GPU=CPU, zpomalí to
 - **Nevolej `aggressive_cleanup` bez `()`** — musí být `await ...aggressive_cleanup()`
@@ -39,10 +39,38 @@
 |------|------|
 | Canonical write | `DuckDBShadowStore.async_ingest_findings_batch()` |
 | LMDB metadata | `paths.open_lmdb()` context manager |
-| MLX inference | `Hermes3Engine.generate()` |
-| HTTP fetch | `FetchCoordinator.fetch()` |
-| Graph upsert | `DuckPGQGraph.upsert_ioc()` |
+| MLX inference | `DeepHermes3Engine.generate()` |
+| HTTP fetch | `FetchCoordinator.fetch()` (Issue #1 — routes clearnet→public_fetcher, onion/i2p→FetchCoordinatorFacade) |
+| Graph upsert | `knowledge.graph_service.upsert_ioc()` |
 
+## CANONICAL ENTRY POINTS
+<!-- Verified by: tools/audit/check_canonical_seams.py | CI gate: pytest tests/test_canonical_seams.py -x -->
+
+Jediná schválená vstupní místa do kritických subsystémů. Libovolná divergence
+(přejmenování, změna typu, async/sync obrácení, chybějící anotace) je **CI failure**.
+Tato sekce je podložená auditem `tools/audit/check_canonical_seams.py` — není volná
+dokumentace, je machine-readable a běží v CI.
+
+| Entry point | Canonical path | Shape |
+|-------------|----------------|-------|
+| Fetch | `hledac.universal.coordinators.fetch_coordinator.FetchCoordinator.fetch()` | async `-> dict[str, Any] | None` |
+| DuckDB write | `hledac.universal.knowledge.duckdb_store.DuckDBShadowStore.async_ingest_findings_batch()` | async |
+| IOC graph | `hledac.universal.knowledge.graph_service.upsert_ioc()` | sync `-> bool` |
+| MLX inference | `hledac.universal.brain.deephermes3_engine.DeepHermes3Engine.generate()` | async `-> str` |
+
+### Encoded drift (dříve nekódováno v AGENTS.md)
+- **Issue #1 — canonical fetch path:** `FetchCoordinator.fetch()` je tenký wrapper
+  (ISSUE #1 FIX) nad `_fetch_url_impl()`. Neroutovat přes `FetchCoordinatorAdapter`
+  ani `FetchCoordinatorFacade` přímo — ty jsou interní implementace wrapperu.
+- **Issue #4 — 3× `upsert_ioc`:** Existují 3 implementace (`graph/quantum_pathfinder.py`,
+  `runtime/adapters/graph_adapter.py`, `knowledge/graph_service.py`). Kanonická je
+  **pouze** `knowledge.graph_service.upsert_ioc()` (module-level i `GraphService.upsert_ioc`).
+- **Issue #9 — IOC dual-engine:** Oba enginy jsou kanonické a *musí* být volány spolu
+  (`live_public_pipeline.py` volá oba) — Rust regex pro rychlost/clearnet, Brain NER pro
+  volný text/dark web. Neredukovat na jeden.
+- **Issue #15 — storage vs knowledge:** `DuckDBShadowStore` (Storage Trinity — canonical
+  findings) a `knowledge.graph_service` (knowledge layer — IOC graph) jsou **odlišné** seam.
+  Zápis findings ≠ upsert IOC; nekolidovat je.
 ## IOC Extraction — Dual Engine
 
 | Engine | Metoda | Kdy použít |
@@ -100,9 +128,9 @@ pytest tests/ -x --timeout=30 -q
 
 ## Feature Flags
 
-Kanonický zdroj: `core/feature_flags.py` — jediná pravda pro všechny `HLEDAC_ENABLE_*` flags.
+Kanonický zdroj: `_core/feature_flags.py` — jediná pravda pro všechny `HLEDAC_ENABLE_*` flags.
 
-Přidat nový flag → přidej do `FeatureFlag` enum v `core/feature_flags.py`.
+Přidat nový flag → přidej do `FeatureFlag` enum v `_core/feature_flags.py`.
 
 ## Storage Trinity
 

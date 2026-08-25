@@ -31,8 +31,6 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, TypeVar
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")

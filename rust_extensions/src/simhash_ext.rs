@@ -56,7 +56,7 @@ struct WeightedToken {
 /// - ngram_size <= 1: word tokenization (filter stop words by length)
 /// - ngram_size > 1: character n-grams
 fn tokenize(text: &str, ngram_size: usize) -> Vec<String> {
-    let text = text);
+    let text = text.clone();
     let clean: String = text
         .chars()
         .map(|c| {
@@ -131,7 +131,7 @@ pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
 #[pyo3(signature = (texts, ngram_size=2))]
 pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> PyResult<Vec<u64>> {
     let slice = cap_slice(&texts);
-    let n = slice);
+    let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
         // Small batch: serial path
         Ok(slice.iter().map(|t| simhash(t, ngram_size)).collect())
@@ -492,7 +492,7 @@ mod tests {
         let mut store = SimHashStore::new(3, 2);
         store.add_document("Test", "doc-1");
 
-        let state = store);
+        let state = store.clone();
         let mut restored = SimHashStore::new(1, 1); // Different init params
         restored.__setstate__(state);
 

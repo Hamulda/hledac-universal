@@ -871,10 +871,27 @@ class MetadataDeduplicator(BaseDeduplicator):
         matches = []
         try:
             item_metadata = await self._extract_and_normalize_metadata(item)
-            for candidate in candidates:
-                candidate_metadata = await self._extract_and_normalize_metadata(candidate)
-                field_similarities = await self._compute_field_similarities(item_metadata, candidate_metadata)
-                overall_similarity = self._compute_weighted_similarity(field_similarities)
+            # F3XX: parallel metadata extraction + field similarity per candidate.
+            # item_metadata is constant; each candidate is independent.
+            import asyncio
+
+            async def _score_one(candidate: QueryItem) -> tuple[QueryItem, float, dict[str, float]] | None:
+                try:
+                    candidate_metadata = await self._extract_and_normalize_metadata(candidate)
+                    field_similarities = await self._compute_field_similarities(item_metadata, candidate_metadata)
+                    overall_similarity = self._compute_weighted_similarity(field_similarities)
+                    return (candidate, overall_similarity, field_similarities)
+                except Exception:
+                    return None
+
+            gathered = await asyncio.gather(*[_score_one(c) for c in candidates], return_exceptions=True)
+            from hledac.universal.utils.asyncx import _check_gathered
+
+            ok_results, _errors = _check_gathered(list(gathered))
+            for result in ok_results:
+                if result is None:
+                    continue
+                candidate, overall_similarity, field_similarities = result
                 if overall_similarity >= self.config.metadata_threshold:
                     score = SimilarityScore(
                         score=overall_similarity,

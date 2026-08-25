@@ -17,9 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Awaitable, TypeVar
-
-if TYPE_CHECKING:
+from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Awaitable
 
 logger = logging.getLogger(__name__)
 

@@ -72,8 +72,6 @@ from hledac.universal.utils.pools.subinterpreter import (
     run_batch_in_subinterpreter,
 )
 
-if TYPE_CHECKING:
-
 T = TypeVar("T")
 
 __all__ = [

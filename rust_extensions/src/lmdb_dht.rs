@@ -293,7 +293,7 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
-    let prefix = b"dht_node:");
+    let prefix = b"dht_node:";
 
     // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
     release_gil_py(py, move || {
@@ -347,7 +347,7 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
 pub fn lmdb_dht_count_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<usize> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    let prefix = b"dht_node:");
+    let prefix = b"dht_node:";
 
     // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
     release_gil_py(py, move || {
@@ -396,7 +396,7 @@ pub fn lmdb_dht_count_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<
 pub fn lmdb_dht_clear_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    let prefix = b"dht_node:");
+    let prefix = b"dht_node:";
 
     // B-14: all LMDB I/O runs in py.detach() — GIL released during cursor
     // iteration and write transaction.
@@ -509,7 +509,7 @@ pub fn lmdb_dht_scan_all_nodes<'py>(
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
-    let neigh_prefix = b"neighbors:");
+    let neigh_prefix = b"neighbors:";
 
     // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
     release_gil_py(py, move || {
@@ -579,7 +579,7 @@ pub fn lmdb_dht_bfs_traverse<'py>(
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let max_hops = max_hops.min(10);
-    let neigh_prefix = b"neighbors:");
+    let neigh_prefix = b"neighbors:";
 
     // B-14: entire BFS traversal runs in detached closure — GIL released
     // during all LMDB reads and JSON parsing.

@@ -48,6 +48,7 @@ from hledac.universal.utils.asyncx import _check_gathered, first_completed, para
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+from hledac.universal.utils.t_string_helpers import build_sanitized_prompt
 
 # Precompiled regex patterns — compile once, use repeatedly
 _MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)
@@ -1099,7 +1100,7 @@ class SynthesisRunner:
         # Issue #20: KV cache params — expose from ModelLifecycle or hardcoded defaults
         # ModelLifecycle does NOT carry _kv_bits/_max_kv_size (it's a Qwen/SmolLM windup sidecar),
         # so we hardcode the same defaults as DeepHermes3Engine for consistency.
-        self._kv_bits: int = int(os.getenv("GHOST_KV_BITS", "4"))
+        self._kv_bits: int = int(os.getenv("HLEDAC_KV_BITS", os.getenv("GHOST_KV_BITS", "4")))
         self._max_kv_size: int = 8192
         # Issue #20-A: cache for Metal probe to avoid repeated Rust FFI calls
         # Structure: {active_bytes: (kv_bits, (emergency, critical, warn))}
@@ -1719,14 +1720,15 @@ class SynthesisRunner:
             context_parts.append(graph_context)
 
         if context_parts:
-            return (
-                f"{chr(10).join(context_parts)}\n\n---\n"
-                f"Query: {query}{stix_context}\n"
-                f"Findings:\n{findings_text}\n"
-                f"Current timestamp: {time.time()}"
+            return build_sanitized_prompt(
+                t"{chr(10).join(context_parts)}\n\n---\nQuery: {query}{stix_context}\nFindings:\n{findings_text}\nCurrent timestamp: {time.time()}",
+                only={"findings_text"},
             )
         else:
-            return f"Query: {query}{stix_context}\nFindings:\n{findings_text}\nCurrent timestamp: {time.time()}"
+            return build_sanitized_prompt(
+                t"Query: {query}{stix_context}\nFindings:\n{findings_text}\nCurrent timestamp: {time.time()}",
+                only={"findings_text"},
+            )
 
     async def _synth_phase5_prompt_optimization(
         self,
@@ -2684,9 +2686,9 @@ class SynthesisRunner:
         winner_logprobs: list[float] = []
 
         tasks = {
-            asyncio.create_task(_race_try_xgrammar(self._lifecycle, prompt), name="xgrammar"): "xgrammar",
-            asyncio.create_task(_race_try_streaming(self._lifecycle, prompt), name="streaming"): "streaming",
-            asyncio.create_task(_race_try_structured(self._lifecycle, prompt), name="structured"): "structured",
+            safe_create_task(_race_try_xgrammar(self._lifecycle, prompt), name="xgrammar"): "xgrammar",
+            safe_create_task(_race_try_streaming(self._lifecycle, prompt), name="streaming"): "streaming",
+            safe_create_task(_race_try_structured(self._lifecycle, prompt), name="structured"): "structured",
         }
 
         pending = set(tasks.keys())

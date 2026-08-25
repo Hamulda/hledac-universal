@@ -75,7 +75,9 @@ MAX_NUM_EXAMPLES = 10  # hard M1 RAM cap
 _THIS_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = _THIS_DIR.parent / "brain" / "compiled"
 
-# M1 invariant: 2.5 GiB Metal cache limit
+# M1 invariant: Metal cache limit is now set dynamically via
+# ``utils.m1_resource.get_dynamic_metal_cache_limit`` (ceiling 1.5 GiB).
+# Kept for backward reference only — no longer used directly.
 METAL_CACHE_LIMIT_BYTES = 2_684_354_560
 
 # Schema version for the compiled JSON file (forward-compat)
@@ -186,16 +188,22 @@ def _init_mlx_buffers() -> None:
 
     INVARIANTS:
       * MLX import lives inside this function (not at module level).
-      * ``set_cache_limit`` MUST be ``2_684_354_560`` bytes (2.5 GiB).
+      * ``set_cache_limit`` uses the canonical dynamic M1 formula
+        (``utils.m1_resource.get_dynamic_metal_cache_limit``, ceiling 1.5 GiB).
     """
     try:
         import mlx.core as mx  # type: ignore[import-not-found]  # INVARIANT: lazy import
 
         if mx.metal.is_available():
-            mx.metal.set_cache_limit(METAL_CACHE_LIMIT_BYTES)
+            from hledac.universal.utils.m1_resource import get_dynamic_metal_cache_limit
+            try:
+                _limit = get_dynamic_metal_cache_limit()
+            except Exception:
+                _limit = 1_610_612_736  # 1.5 GiB ceiling (AGENTS invariant #8)
+            mx.metal.set_cache_limit(_limit)
             logger.debug(
                 "MLX Metal cache limit set to %.2f GiB",
-                METAL_CACHE_LIMIT_BYTES / 2**30,
+                _limit / 2**30,
             )
     except Exception as e:  # fail-soft
         logger.debug("MLX buffer init skipped: %s", e)

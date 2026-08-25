@@ -370,9 +370,11 @@ class GopherTransport:
             List of GopherFinding from crawled content
         """
         import time as _time
+        from hledac.universal.utils.bloom_filter import RotatingBloomFilter  # M-2026-FIX: bounded dedup
 
         findings: list[GopherFinding] = []
-        seen_urls: set[str] = set()
+        # M-2026-FIX: was unbounded set[str] — bounded RBF keeps memory in check.
+        seen_urls: RotatingBloomFilter = RotatingBloomFilter(max_elements=50_000, error_rate=0.005)
         queue: list[tuple[str, int, str, int]] = [(start_host, start_port, start_selector, 0)]
         start_time = _time.monotonic()
         from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore

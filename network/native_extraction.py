@@ -218,7 +218,10 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
         size_per_index = max(_DEFAULT_ES_SIZE // max(len(sampled_indices), 1), 1)
         size_per_index = min(size_per_index, _MAX_ES_DOCS_PER_INDEX)
 
-        for idx in sampled_indices:
+        # M-2026-FIX: parallel ES index search via asyncio.gather — all indices queried concurrently.
+        # Each index search has its own timeout protection via asyncio.timeout.
+
+        async def _search_index(idx: str) -> list[dict[str, Any]]:
             try:
                 async with asyncio.timeout(_READ_TIMEOUT_S):
                     r = await session.post(
@@ -229,15 +232,20 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
                             "_source": True,
                         },
                     )
-                if r.status_code == 200:
-                    hits = r.json().get("hits", {}).get("hits", [])
-                    for hit in hits:
-                        if isinstance(hit, dict):
-                            documents.append(hit.get("_source", {}))
+                    if r.status_code == 200:
+                        hits = r.json().get("hits", {}).get("hits", [])
+                        return [hit.get("_source", {}) for hit in hits if isinstance(hit, dict)]
             except TimeoutError:
-                continue
+                pass
             except Exception:
-                continue
+                pass
+            return []
+
+        gathered = await asyncio.gather(*[_search_index(idx) for idx in sampled_indices], return_exceptions=True)
+        from hledac.universal.utils.asyncx import _check_gathered
+        ok_results, _errors = _check_gathered(list(gathered))
+        for doc_list in ok_results:
+            documents.extend(doc_list)
 
         return NativeExtractionResult(
             host=host,

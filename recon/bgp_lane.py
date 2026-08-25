@@ -519,8 +519,19 @@ class BGPAdapter:
             return []
         unique_asns = list({f.asn for f in asns if f.asn})
         all_findings = list(asns)
-        for asn in unique_asns:
-            prefixes = await asn_to_prefixes(asn, session)
+        # F3XX: parallel prefix resolution per ASN via bounded_parallel_map.
+        from hledac.universal.utils.asyncx import bounded_parallel_map
+
+        async def _prefixes_for_asn(asn: int) -> list[BGPFinding]:
+            return await asn_to_prefixes(asn, session)
+
+        prefix_lists = await bounded_parallel_map(
+            _prefixes_for_asn,
+            unique_asns,
+            max_concurrency=8,
+            label="bgp_enrich_org",
+        )
+        for prefixes in prefix_lists:
             all_findings.extend(prefixes)
             self._stats["prefixes_collected"] += len(prefixes)
         self._stats["asns_resolved"] += len(unique_asns)

@@ -468,7 +468,7 @@ class ANEGNNEngine:
             batch_size=n_nodes,
         )
 
-    def batch_inference(
+    async def batch_inference(
         self,
         node_ids: list[str],
         features: np.ndarray,
@@ -486,16 +486,49 @@ class ANEGNNEngine:
         Returns:
             List of GNNBatchResult
         """
-        results = []
+        results: list[GNNBatchResult] = []
         n_nodes = len(node_ids)
+        # M-2026-FIX: was asyncio.run() per-batch — crashes on M1 Metal under
+        # running loop (AGENTS.md invariant #4). Now we await run_inference directly
+        # since batch_inference is now async (API contract: callers must `await`).
         for i in range(0, n_nodes, batch_size):
             batch_end = min(i + batch_size, n_nodes)
             batch_ids = node_ids[i:batch_end]
             batch_features = features[i:batch_end]
-            batch_edges = [(src - i, dst - i) for src, dst in edges if i <= src < batch_end and i <= dst < batch_end]
-            result = asyncio.run(self.run_inference(batch_ids, batch_features, batch_edges))
+            batch_edges = [(s - i, d - i) for s, d in edges if i <= s < batch_end and i <= d < batch_end]
+            result = await self.run_inference(batch_ids, batch_features, batch_edges)
             results.append(result)
         return results
+
+    def batch_inference_sync(
+        self,
+        node_ids: list[str],
+        features: np.ndarray,
+        edges: list[tuple[int, int]],
+        batch_size: int = ANE_OPTIMAL_BATCH,
+    ) -> list[GNNBatchResult]:
+        """Sync wrapper for batch_inference — safe across running-loop contexts.
+
+        Invariants:
+            * If a loop is running: dispatches via `asyncio.run_coroutine_threadsafe`
+              using `asyncio.run_coroutine_threadsafe(...).result(timeout)`.
+            * If no loop is running: uses `asyncio.Runner().run()` (Python 3.14+
+              recommended over deprecated `asyncio.run`).
+
+        Does NOT use raw `asyncio.run()` — that's a crash vector on M1 Metal.
+        """
+        coro = self.batch_inference(node_ids, features, edges, batch_size=batch_size)
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is None:
+            # No event loop: use asyncio.Runner (Python 3.14+ recommended path).
+            return asyncio.Runner().run(coro)
+        # Already inside a running loop: schedule on that loop and block until done.
+        import concurrent.futures
+        future = asyncio.run_coroutine_threadsafe(coro, running)
+        return future.result(timeout=None)
 
 
 class HybridLinkPredictor:

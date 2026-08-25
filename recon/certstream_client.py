@@ -193,7 +193,7 @@ class CertstreamWebSocketClient:
 
         self._running = True
         self._stop_event.clear()
-        self._monitor_task = asyncio.create_task(self._monitor_loop(), name="certstream:monitor")
+        self._monitor_task = safe_create_task(self._monitor_loop(), name="certstream:monitor")
         logger.info(f"[Certstream] Started monitoring {len(self._watch_domains)} domains")
 
     async def stop(self) -> None:

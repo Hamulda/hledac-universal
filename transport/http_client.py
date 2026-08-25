@@ -974,9 +974,9 @@ class _ResponseAdapter:
 
     def json(self) -> Any:
         """Parse response body as JSON. Raises ValueError on failure."""
-        import json as _json
+        from hledac.universal.utils.codec import json_loads
 
-        return _json.loads(self.text)
+        return json_loads(self.text)
 
     @property
     def ok(self) -> bool:

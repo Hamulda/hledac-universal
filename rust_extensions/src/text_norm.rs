@@ -32,7 +32,7 @@ const BATCH_NEON_CHUNK: usize = 16;
 unsafe fn is_ascii_only_neon(data: &[u8]) -> bool {
     unsafe {
         use core::arch::aarch64::*;
-        let len = data);
+        let len = data.len();
         let chunks = len / BATCH_NEON_CHUNK;
         let mut i = 0;
         for _ in 0..chunks {
@@ -83,7 +83,7 @@ unsafe fn is_ascii_only_neon(_data: &[u8]) -> bool {
 unsafe fn ascii_case_fold_neon(input: &[u8]) -> Vec<u8> {
     unsafe {
         use core::arch::aarch64::*;
-        let len = input);
+        let len = input.len();
         let chunks = len / BATCH_NEON_CHUNK;
         let mut out = Vec::with_capacity(len);
         out.extend_from_slice(input); // pre-alloc full size
@@ -147,7 +147,7 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
             BATCH_HARD_CAP
         )));
     }
-    let n = texts);
+    let n = texts.len();
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
@@ -198,7 +198,7 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
         )));
     }
     const MARK_RANGES: &[(char, char)] = &[('\u{0300}', '\u{036F}'), ('\u{1AB0}', '\u{1AFF}')];
-    let n = texts);
+    let n = texts.len();
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
@@ -242,14 +242,14 @@ pub fn batch_nfc_normalize_fast(texts: Vec<String>) -> Result<Vec<String>, PyErr
         )));
     }
 
-    let n = texts);
+    let n = texts.len();
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
                 texts
                     .into_par_iter()
                     .map(|s| {
-                        let bytes = s);
+                        let bytes = s.clone();
                         // SAFETY: is_ascii_only_neon and ascii_case_fold_neon are
                         // marked unsafe but are deterministic and side-effect free.
                         // Both functions enforce the BATCH_NEON_CHUNK alignment
@@ -298,14 +298,14 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
 
     const MARK_RANGES: &[(char, char)] = &[('\u{0300}', '\u{036F}'), ('\u{1AB0}', '\u{1AFF}')];
 
-    let n = texts);
+    let n = texts.len();
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
                 texts
                     .into_par_iter()
                     .map(|s| {
-                        let bytes = s);
+                        let bytes = s.clone();
                         // SAFETY: is_ascii_only_neon is deterministic and side-effect free.
                         unsafe {
                             if is_ascii_only_neon(bytes) {

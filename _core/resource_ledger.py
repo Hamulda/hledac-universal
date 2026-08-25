@@ -58,6 +58,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -344,12 +345,20 @@ class ResourceLedger:
         return len(self._allocations[resource_type])
 
     def _count_fds(self) -> int:
-        """Get current FD count (system + tracked)."""
+        """Get current FD count (system + tracked).
+
+        On macOS ``/proc`` does not exist, so the previous code fell back to the
+        RLIMIT value (a *limit*, not a usage count) — which made every FD
+        admission permanently denied. BSD exposes open fds via ``/dev/fd``.
+        """
         now = time.monotonic()
         if now - self._last_fd_check < 1.0 and self._system_fd_count > 0:
             return self._system_fd_count
         try:
-            if hasattr(os, "pidfd_open"):
+            if sys.platform == "darwin":
+                # Count real open fds for this process (ignore "." / ".." entries).
+                self._system_fd_count = sum(1 for n in os.listdir("/dev/fd") if n.isdigit())
+            elif hasattr(os, "pidfd_open"):
                 fd_dir = f"/proc/{os.getpid()}/fd"
                 if os.path.exists(fd_dir):
                     self._system_fd_count = len(os.listdir(fd_dir))

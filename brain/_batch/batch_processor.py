@@ -34,8 +34,6 @@ from hledac.universal.utils._patterns import collect_results_async
 # _core is at the project root level
 from hledac.universal._core import aclose
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +59,7 @@ class BatchItem:
     created_at: float = field(default_factory=time.time, init=False)
     result: Any = field(default=None, init=False, repr=False)
 
-    def __lt__(self, other: "BatchItem") -> bool:
+    def __lt__(self, other: BatchItem) -> bool:
         """Compare by priority for heap queue."""
         if not isinstance(other, BatchItem):
             return NotImplemented
@@ -213,7 +211,7 @@ class BatchProcessor:
                     item.result = result
                     if item.future and not item.future.done():
                         item.future.set_result(result)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if item.future and not item.future.done():
                         item.future.set_exception(
                             TimeoutError(f"Batch item {item.id} timed out")

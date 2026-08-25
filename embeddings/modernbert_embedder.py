@@ -34,12 +34,34 @@ MAX_EMBED_BATCH_SIZE = 256
 # Maximum total chars per batch — enforces sub-batch chunking for huge inputs
 MAX_EMBED_BATCH_TOTAL_CHARS = 5_000_000
 
-try:
-    import mlx.core as mx
+_mx = None
+_mlx_checked = False
 
-    _mlx_available = mx.metal.is_available() if hasattr(mx, "metal") else False
-except ImportError:
-    _mlx_available = False
+
+def _get_mx():
+    """Lazy MLX import — AGENTS invariant forbids top-level MLX imports.
+
+    Early ``import mlx.core`` at module load is an M1 crash vector; defer it
+    to first use so merely importing this module never pulls in the Metal
+    backend.
+    """
+    global _mx, _mlx_checked
+    if not _mlx_checked:
+        _mlx_checked = True
+        try:
+            import mlx.core as mx_mod
+
+            _mx = mx_mod
+        except ImportError:
+            _mx = None
+    return _mx
+
+
+def _mlx_is_available() -> bool:
+    mx = _get_mx()
+    if mx is None:
+        return False
+    return bool(mx.metal.is_available()) if hasattr(mx, "metal") else False
 try:
     from mlx_embeddings import load as mlx_embeddings_load
 
@@ -78,6 +100,19 @@ try:
                     cls._instance = True
                     logger.info(f"[MODERNBERT] MLX load OK: {model_path}")
             return (cls._model, cls._tokenizer)
+
+        @classmethod
+        def unload(cls) -> None:
+            """Release the process-wide singleton weights (~600MB on M1 UMA).
+
+            The instance-level ModernBERTEmbedder.unload() only nulls its own
+            handles; the loader keeps the real model/processor/tokenizer alive
+            at class scope, so they must be released here to reclaim RSS.
+            """
+            cls._model = None
+            cls._processor = None
+            cls._tokenizer = None
+            cls._instance = None
 
     MLX_EMBEDDINGS_AVAILABLE = True
 except ImportError:
@@ -216,6 +251,7 @@ class ModernBERTEmbedder:
             outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
         emb = outputs.text_embeds
         if self.config.normalize:
+            mx = _get_mx()
             norms = mx.linalg.norm(emb, axis=1, keepdims=True)
             emb = emb / mx.clip(norms, a_min=1e-12, a_max=None)
         result = np.array(emb)[0]
@@ -291,6 +327,7 @@ class ModernBERTEmbedder:
                 outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
             emb = outputs.text_embeds
             if self.config.normalize:
+                mx = _get_mx()
                 norms = mx.linalg.norm(emb, axis=1, keepdims=True)
                 emb = emb / mx.clip(norms, a_min=1e-12, a_max=None)
             all_embeddings.append(np.array(emb))
@@ -358,8 +395,9 @@ class ModernBERTEmbedder:
         self._model = None
         self._tokenizer = None
         self._is_loaded = False
-        if _mlx_available:
+        if _mlx_is_available():
             try:
+                mx = _get_mx()
                 mx.eval([])
                 import gc
 

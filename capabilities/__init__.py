@@ -6,10 +6,18 @@ Sprint: F650H / F600K / F130S
 Target: capabilities.py
 Goal: bounded de-ownership + facade truth hardening
 
-NOTE: This module is the ModelLifecycleManager facade — NOT a dependency registry.
-For capability/dependency detection, use ``core.capabilities.CAP`` (SoT).
-For sidecar plugin registration, use ``capabilities_registry.CapabilityPluginRegistry``.
-See F350M-R architecture decision: separate concerns (model lifecycle vs deps).
+NOTE: This package is the unified capability SoT.
+
+It consolidates (ISSUE #19):
+  * Model lifecycle + routing facade (``Capability`` enum, ``CapabilityRegistry``,
+    ``CapabilityRouter``, ``ModelLifecycleManager``) — the model-capability domain.
+  * Sidecar plugin registration (``CapabilityPluginRegistry``,
+    ``get_capability_registry()``) — folded in from the standalone
+    ``capabilities_registry.py``.
+
+For optional-dependency detection (SoT) use ``CAP`` (alias of
+``hledac.universal._core.capabilities.CAPS``). See F350M-R architecture
+decision: separate concerns (model lifecycle vs deps vs optional deps).
 
 VERIFIED HYPOTHESES:
 - H2 CONFIRMED: _release_all_models() does MLX cleanup directly — duplicate of
@@ -41,6 +49,16 @@ if TYPE_CHECKING:
     MLX_AVAILABLE: bool
     mx: Any
 from compat.msgspec_gc_compat import Struct
+
+# ISSUE #19: unified capability SoT. Plugin registry folded in from the
+# standalone capabilities_registry.py; optional-dependency registry aliased
+# from the _core capabilities SoT so `hledac.universal.capabilities.CAP` is valid.
+from hledac.universal.capabilities._plugin_registry import (
+    CapabilityPluginRegistry,
+    CapabilityRegistration,
+    get_capability_registry,
+)
+from hledac.universal._core.capabilities import CAPS as CAP
 
 _MLX_LOADED = False
 
@@ -115,6 +133,7 @@ class Capability(Enum):
     HERMES = "hermes"
     MODERNBERT = "modernbert"
     GLINER = "gliner"
+    NER_MODEL = "ner_model"  # dual-engine Brain NER extraction gate
 
 
 class CapabilityTruthLayer(Enum):

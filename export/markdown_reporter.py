@@ -17,6 +17,7 @@ except ImportError:
 
     _HAS_ORJSON = False
 import logging
+from hledac.universal.utils.codec import json_dumps, json_loads
 import os
 from collections.abc import Iterable
 from datetime import datetime
@@ -185,9 +186,7 @@ def _parse_forensic_payload(payload: str | None) -> dict[str, str] | None:
     # Shape 1: JSON
     if bounded.lstrip().startswith("{"):
         try:
-            import json as _json
-
-            obj = _json.loads(bounded)
+            obj = json_loads(bounded)
         except Exception:
             return None
         if not isinstance(obj, dict):
@@ -609,7 +608,7 @@ def _render_machine_readable_summary(report: dict[str, Any]) -> str:
         json_bytes = orjson.dumps(data, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS)
         json_str = json_bytes.decode("utf-8")
     else:
-        json_str = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
+        json_str = json_dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
     return f"```json\n{json_str}\n```"
 
 
@@ -669,7 +668,7 @@ def render_diagnostic_markdown_to_path(
     content = render_diagnostic_markdown(report)
 
     if path is None:
-        export_dir_env = os.environ.get("GHOST_EXPORT_DIR")
+        export_dir_env = os.environ.get("HLEDAC_EXPORT_DIR", os.environ.get("GHOST_EXPORT_DIR"))
         if export_dir_env:
             base = Path(export_dir_env)
         else:

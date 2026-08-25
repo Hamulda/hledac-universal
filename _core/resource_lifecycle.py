@@ -84,8 +84,6 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final
 from collections.abc import Callable
 
-if TYPE_CHECKING:
-
 # MODERN-36 Fix: Import UmaBudget at module level for SSOT constant derivation
 from hledac.universal.utils.uma_budget import UmaBudget
 from _core._util import aclose
@@ -103,6 +101,7 @@ _RSS_BLOCK_GIB: Final[float] = float(os.environ.get(
     "HLEDAC_RSS_BLOCK_GIB",
     str(UmaBudget.MISSION_PEAK_RSS_GIB)  # 5.5 GiB from SSOT
 ))
+_RSS_BLOCK_HYSTERESIS_GIB: Final[float] = 0.5  # recovery band below block threshold
 _SHUTDOWN_TIMEOUT_PER_LAYER_S: Final[float] = float(
     os.environ.get("HLEDAC_SHUTDOWN_TIMEOUT_LAYER_S", "10.0")
     )
@@ -664,7 +663,7 @@ class ResourceLifecycleManager:
                     await self._shutdown_resource(name, handle)
                 handle.mark_closed()
                 logger.debug("[RLM] ✓ %s (%s) — closed", name, handle.kind)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 err_msg = f"Timeout shutting down {name} ({handle.kind})"
                 handle.mark_error(err_msg)
                 errors.append(TimeoutError(err_msg))
@@ -793,31 +792,29 @@ class ResourceLifecycleManager:
 
         On M1 8GB, when RSS exceeds 5.5 GiB, we block new executor/process
         pool creation to prevent the OOM killer.
-        """
-        if self._rss_block_triggered:
-            raise RuntimeError(
-                f"[RLM] RSS block active — RSS exceeds {_RSS_BLOCK_GIB} GiB. "
-                "No new executors/pools can be created."
-    )
 
+        The block is sticky-with-recovery: a transient LLM-load spike (common on
+        M1) must not permanently disable all future executor/pool creation. We
+        re-sample live RSS on every call and clear the latch once memory has
+        receded below (threshold - hysteresis).
+        """
         try:
             import psutil
 
             proc = psutil.Process()
-            mem = proc.memory_info()
-            rss_gib = mem.rss / (1024**3)
-            if rss_gib > _RSS_BLOCK_GIB:
-                self._rss_block_triggered = True
-                raise RuntimeError(
-                    f"[RLM] RSS ({rss_gib:.1f} GiB) exceeds block threshold "
-                    f"({_RSS_BLOCK_GIB} GiB). Blocking new allocations."
-    )
-        except ImportError:  # noqa: BLE001
-            pass  # psutil not available — skip check
-        except RuntimeError:
-            raise
-        except Exception:  # noqa: BLE001
-            pass
+            rss_gib = proc.memory_info().rss / (1024**3)
+        except Exception:
+            return  # psutil unavailable or sampling failed — skip check
+
+        if rss_gib > _RSS_BLOCK_GIB:
+            self._rss_block_triggered = True
+            raise RuntimeError(
+                f"[RLM] RSS ({rss_gib:.1f} GiB) exceeds block threshold "
+                f"({_RSS_BLOCK_GIB} GiB). Blocking new allocations."
+            )
+        # Recovery: clear the latch once memory has receded (hysteresis band).
+        if self._rss_block_triggered and rss_gib < (_RSS_BLOCK_GIB - _RSS_BLOCK_HYSTERESIS_GIB):
+            self._rss_block_triggered = False
 
     def is_memory_pressured(self) -> bool:
         """Check if system is under memory pressure."""

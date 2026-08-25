@@ -381,7 +381,7 @@ fn build_op_msg(database: &str, command: &[(&str, BsonValue)]) -> Vec<u8> {
     let body = bson_encode_doc(&refs);
 
     // OP_MSG header (16) + flagBits (4) + section kind (1) + body
-    let total = 16 + 4 + 1 + body);
+    let total = 16 + 4 + 1 + body;
 
     let mut msg = Vec::with_capacity(total);
     // MsgHeader
@@ -1263,7 +1263,7 @@ impl RedisDumper {
 
         loop {
             let cmd_str = format!("SCAN {} COUNT {}\r\n", cursor, count);
-            let cmd = cmd_str);
+            let cmd = cmd_str.as_str();
 
             match Self::redis_command(&mut stream, cmd, timeout)? {
                 RespValue::Array(items) if items.len() >= 2 => {

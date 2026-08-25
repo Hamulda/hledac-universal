@@ -34,9 +34,9 @@ def _json_dumps(data: Any, **kwargs: Any) -> str:
         if kwargs.get("sort_keys"):
             opts |= _orjson.OPT_SORT_KEYS
         return _orjson.dumps(data, option=opts).decode("utf-8")
-    import json as _j
+    from hledac.universal.utils.codec import json_dumps
 
-    return _j.dumps(data, **kwargs)
+    return json_dumps(data, **kwargs)
 
 
 from hledac.universal.security.pq_crypto import (  # noqa: E402
@@ -302,9 +302,9 @@ def _parse_forensic_payload_jsonld(payload: str | None) -> dict[str, str] | None
     bounded = payload[:_FORENSIC_MAX_PAYLOAD_PARSE]
     if bounded.lstrip().startswith("{"):
         try:
-            import json as _json
+            from hledac.universal.utils.codec import json_loads, json_dumps, encode_compact_sorted
 
-            obj = _json.loads(bounded)
+            obj = json_loads(bounded)
         except Exception:
             return None
         if not isinstance(obj, dict):
@@ -553,12 +553,7 @@ def _build_pq_extension_jsonld(obj: dict[str, Any], backend: PostQuantumBackend,
     try:
         import hashlib
 
-        canonical: bytes = _json_dumps(
-            obj,
-            sort_keys=True,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        canonical: bytes = encode_compact_sorted(obj).encode("utf-8")
         digest: str = hashlib.sha256(canonical).hexdigest()
 
         if not backend.ensure_mldsa_key(key_id, level=65):
@@ -589,7 +584,7 @@ def render_jsonld_str(report: object) -> str:
         JSON string with sorted keys for determinism.
     """
     obj = render_jsonld(report)
-    return _json_dumps(obj, indent=True, sort_keys=True, ensure_ascii=False)
+    return json_dumps(obj, indent=True, sort_keys=True, ensure_ascii=False)
 
 
 def render_jsonld_to_path(
@@ -611,7 +606,7 @@ def render_jsonld_to_path(
     content = render_jsonld_str(report)
 
     if path is None:
-        export_dir_env = os.environ.get("GHOST_EXPORT_DIR")
+        export_dir_env = os.environ.get("HLEDAC_EXPORT_DIR", os.environ.get("GHOST_EXPORT_DIR"))
         if export_dir_env:
             base = Path(export_dir_env)
         else:
@@ -749,4 +744,4 @@ def render_analyst_evidence_jsonld_str(
         model_used=model_used,
         timing_ms=timing_ms,
     )
-    return _json_dumps(obj, indent=True, sort_keys=True, ensure_ascii=False)
+    return json_dumps(obj, indent=True, sort_keys=True, ensure_ascii=False)

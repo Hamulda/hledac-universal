@@ -109,8 +109,6 @@ import logging
 from dataclasses import dataclass as _dataclass
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-
 logger = logging.getLogger(__name__)
 
 # D4: Centralized Rust access via core.rust_backend (R6 pattern)
@@ -125,7 +123,7 @@ _SIMD_AHO_AVAILABLE = (
 _SIMD_AHO_MODULE = getattr(_rust_backend.raw, "aho_corasick_simd", None) if _SIMD_AHO_AVAILABLE else None
 
 # Module-level singleton matcher (lazy-initialized)
-_cached_matcher: "SIMDAhoCorasickMatcher | None" = None
+_cached_matcher: SIMDAhoCorasickMatcher | None = None
 _matcher_lock: asyncio.Lock | None = None
 
 @_dataclass(frozen=True, slots=True)
@@ -140,7 +138,7 @@ class SIMDMatch:
     confidence: float
 
     @classmethod
-    def from_rust(cls, rust_match: Any) -> "SIMDMatch":
+    def from_rust(cls, rust_match: Any) -> SIMDMatch:
         """Create from Rust SIMDMatch object."""
         return cls(
             start=getattr(rust_match, "start", 0),
@@ -162,7 +160,7 @@ class ScanStats:
     throughput_mbps: float = 0.0
 
     @classmethod
-    def from_rust(cls, rust_stats: Any | None) -> "ScanStats":
+    def from_rust(cls, rust_stats: Any | None) -> ScanStats:
         """Create from Rust ScanStats object."""
         if rust_stats is None:
             return cls()
@@ -297,7 +295,7 @@ class SIMDAhoCorasickMatcher:
         self._labels = labels or ["" for _ in patterns]
         self._case_insensitive = case_insensitive
         self._matcher: Any = None
-        self._python_fallback: "_PythonAhoSIMDFallback | None" = None
+        self._python_fallback: _PythonAhoSIMDFallback | None = None
 
         if _SIMD_AHO_MODULE is not None:
             try:
@@ -318,7 +316,7 @@ class SIMDAhoCorasickMatcher:
             self._python_fallback = _PythonAhoSIMDFallback(patterns, self._labels, case_insensitive)
 
     @classmethod
-    def from_ioc_patterns(cls, custom_patterns: list[str] | None = None) -> "SIMDAhoCorasickMatcher":
+    def from_ioc_patterns(cls, custom_patterns: list[str] | None = None) -> SIMDAhoCorasickMatcher:
         """
         Create matcher with IOC patterns from _core/ioc_patterns.py.
 
